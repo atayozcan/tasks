@@ -1,4 +1,5 @@
 use chrono::{NaiveDate, TimeZone, Utc};
+
 use cosmic::{
     iced::{Alignment, Length},
     theme,
@@ -9,21 +10,21 @@ use cosmic::{
     },
     Element,
 };
+use uuid::Uuid;
 
 use crate::{
     core::icons,
     fl,
-    storage::{
-        models::{self, Priority},
-        LocalStorage,
-    },
+    model::{self, Priority},
+    services::store::Store,
 };
 
 pub struct Details {
-    pub task: models::Task,
+    pub task: model::Task,
+    pub selected_list: Option<Uuid>,
     pub priority_model: segmented_button::Model<segmented_button::SingleSelect>,
     pub text_editor_content: widget::text_editor::Content,
-    pub storage: LocalStorage,
+    pub store: Store,
 }
 
 #[derive(Debug, Clone)]
@@ -38,11 +39,11 @@ pub enum Message {
 
 pub enum Output {
     OpenCalendarDialog,
-    RefreshTask(models::Task),
+    RefreshTask(model::Task),
 }
 
 impl Details {
-    pub fn new(storage: LocalStorage) -> Self {
+    pub fn new(storage: Store) -> Self {
         let priority_model = segmented_button::ModelBuilder::default()
             .insert(|entity| {
                 entity
@@ -62,10 +63,11 @@ impl Details {
             .build();
 
         Self {
-            task: models::Task::default(),
+            task: model::Task::default(),
+            selected_list: None,
             priority_model,
             text_editor_content: widget::text_editor::Content::new(),
-            storage,
+            store: storage,
         }
     }
 
@@ -98,9 +100,16 @@ impl Details {
             }
         }
 
-        if let Err(e) = self.storage.update_task(&self.task) {
-            tracing::error!("Failed to update task: {}", e);
+        if let Some(list_id) = self.selected_list {
+            if let Err(e) = self
+                .store
+                .tasks(list_id)
+                .update(self.task.id, |t| *t = self.task.clone())
+            {
+                tracing::error!("Failed to update task: {}", e);
+            }
         }
+
         tasks.push(Output::RefreshTask(self.task.clone()));
         tasks
     }

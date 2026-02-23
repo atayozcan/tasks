@@ -4,7 +4,7 @@ use crate::{
         dialog::{DialogAction, DialogPage},
         Message,
     },
-    storage::models::List,
+    model::List,
 };
 use cosmic::{
     iced::keyboard::{Key, Modifiers},

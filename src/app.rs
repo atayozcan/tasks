@@ -43,18 +43,19 @@ use crate::{
         key_bind::key_binds,
     },
     fl,
+    model::List,
     pages::{
         content::{self, Content},
         details::{self, Details},
     },
-    storage::{models::List, LocalStorage},
+    services::store::Store,
 };
 
 pub struct Tasks {
     core: Core,
     about: widget::about::About,
     nav_model: widget::segmented_button::SingleSelectModel,
-    storage: LocalStorage,
+    store: Store,
     content: Content,
     details: Details,
     config_handler: Option<cosmic_config::Config>,
@@ -126,9 +127,15 @@ impl Tasks {
                     )));
                 }
                 content::Output::ToggleHideCompleted(list) => {
-                    if let Some(data) = self.nav_model.active_data_mut::<List>() {
-                        data.hide_completed = list.hide_completed;
-                        if let Err(err) = self.storage.update_list(&list) {
+                    match self.store.lists().update(list.id, |list| {
+                        list.hide_completed = !list.hide_completed;
+                    }) {
+                        Ok(list) => {
+                            if let Some(data) = self.nav_model.active_data_mut::<List>() {
+                                data.hide_completed = list.hide_completed;
+                            }
+                        }
+                        Err(err) => {
                             tracing::error!("Error updating list: {err}");
                         }
                     }
@@ -195,14 +202,14 @@ impl Tasks {
                     match dialog_page {
                         DialogPage::New(name) => {
                             let list = List::new(&name);
-                            match self.storage.create_list(&list) {
-                                Ok(list) => {
+                            match self.store.lists().save(&list) {
+                                Ok(_) => {
                                     tasks.push(
                                         self.update(Message::Tasks(TasksAction::AddList(list))),
                                     );
                                 }
                                 Err(err) => {
-                                    tracing::error!("Error creating list: {err}");
+                                    tracing::error!("Error updating list: {err}");
                                 }
                             }
                         }
@@ -212,17 +219,27 @@ impl Tasks {
                             } else {
                                 self.nav_model.active_data_mut::<List>()
                             };
+
                             if let Some(list) = data {
-                                list.name.clone_from(&name.clone());
-                                let list = list.clone();
-                                self.nav_model
-                                    .text_set(self.nav_model.active(), name.clone());
-                                if let Err(err) = self.storage.update_list(&list) {
-                                    tracing::error!("Error updating list: {err}");
+                                match self
+                                    .store
+                                    .lists()
+                                    .update(list.id, |l| l.name = name.clone())
+                                {
+                                    Ok(_) => {
+                                        list.name.clone_from(&name.clone());
+                                        let list = list.clone();
+                                        self.nav_model
+                                            .text_set(self.nav_model.active(), name.clone());
+
+                                        tasks.push(self.update(Message::Content(
+                                            content::Message::SetList(Some(list)),
+                                        )));
+                                    }
+                                    Err(err) => {
+                                        tracing::error!("Error updating list: {err}");
+                                    }
                                 }
-                                tasks.push(self.update(Message::Content(
-                                    content::Message::SetList(Some(list)),
-                                )));
                             }
                         }
                         DialogPage::Delete(entity) => {
@@ -244,7 +261,11 @@ impl Tasks {
                             if let Some(list) = self.nav_model.active_data_mut::<List>() {
                                 list.icon = Some(name);
                                 let list = list.clone();
-                                if let Err(err) = self.storage.update_list(&list) {
+                                if let Err(err) = self
+                                    .store
+                                    .lists()
+                                    .update(list.id, |l| l.icon = list.icon.clone())
+                                {
                                     tracing::error!("Error updating list: {err}");
                                 }
                                 tasks.push(self.update(Message::Content(
@@ -341,14 +362,14 @@ impl Tasks {
                 }
                 NavMenuAction::Export(entity) => {
                     if let Some(list) = self.nav_model.data::<List>(entity) {
-                        match self.storage.tasks(list) {
-                            Ok(data) => {
-                                let exported_markdown = LocalStorage::export_list(list, &data);
-                                tasks.push(self.update(Message::Application(
-                                    ApplicationAction::Dialog(DialogAction::Open(
-                                        DialogPage::Export(exported_markdown),
-                                    )),
-                                )));
+                        match self.store.tasks(list.id).load_all() {
+                            Ok(_data) => {
+                                // let exported_markdown = Store::export_list(list, &data);
+                                // tasks.push(self.update(Message::Application(
+                                //     ApplicationAction::Dialog(DialogAction::Open(
+                                //         DialogPage::Export(exported_markdown),
+                                //     )),
+                                // )));
                             }
                             Err(err) => {
                                 tracing::error!("Error fetching tasks: {err}");
@@ -414,7 +435,7 @@ impl Tasks {
         tasks_action: TasksAction,
     ) {
         match tasks_action {
-            TasksAction::FetchLists => match self.storage.lists() {
+            TasksAction::FetchLists => match self.store.lists().load_all() {
                 Ok(lists) => {
                     tasks.push(self.update(Message::Tasks(TasksAction::PopulateLists(lists))));
                 }
@@ -448,7 +469,7 @@ impl Tasks {
                     self.nav_model.active_data::<List>()
                 };
                 if let Some(list) = data {
-                    if let Err(err) = self.storage.delete_list(list) {
+                    if let Err(err) = self.store.lists().delete(list.id) {
                         tracing::error!("Error deleting list: {err}");
                     }
 
@@ -496,7 +517,7 @@ impl Application for Tasks {
         let mut app = Tasks {
             core,
             about,
-            storage: flags.storage.clone(),
+            store: flags.storage.clone(),
             nav_model,
             content: Content::new(flags.storage.clone()),
             details: Details::new(flags.storage),

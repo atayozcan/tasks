@@ -1,7 +1,8 @@
 mod app;
 mod core;
+mod model;
 mod pages;
-mod storage;
+mod services;
 
 use core::settings;
 

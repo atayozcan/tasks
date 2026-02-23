@@ -3,6 +3,7 @@ use cosmic::{
     iced::{Limits, Size},
     Application,
 };
+use directories::ProjectDirs;
 use std::sync::Mutex;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -13,25 +14,20 @@ use crate::{
         icons::{IconCache, ICON_CACHE},
         localize::localize,
     },
-    storage::{
-        migration::{migrate_data, migrate_data_dir},
-        LocalStorage,
-    },
+    services::store::Store,
 };
 
 pub fn init() {
     localize();
     icons();
     tracing();
-    migrate_data_dir(&["com.system76.CosmicTasks", "dev.edfloreshz.Orderly"]);
-    match migrate_data() {
-        Ok(()) => tracing::info!("Data migration completed successfully."),
-        Err(error) => tracing::error!("Data migration failed: {:?}", error),
-    }
 }
 
-pub fn storage() -> Result<LocalStorage, crate::LocalStorageError> {
-    LocalStorage::new(Tasks::APP_ID)
+pub fn storage() -> Result<Store, crate::Error> {
+    let project = ProjectDirs::from("dev", "edfloreshz", "Tasks")
+        .expect("Failed to determine project directories");
+
+    Store::open(project.data_dir())
 }
 
 pub fn settings() -> Settings {

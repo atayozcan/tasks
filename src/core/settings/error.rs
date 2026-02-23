@@ -11,13 +11,12 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Flags {
-    pub error: crate::LocalStorageError,
+    pub error: crate::Error,
 }
 
 pub struct View {
     core: Core,
-    error: crate::LocalStorageError,
-    cause: Option<String>,
+    error: crate::Error,
 }
 
 impl Application for View {
@@ -36,11 +35,9 @@ impl Application for View {
     }
 
     fn init(core: cosmic::Core, flags: Self::Flags) -> (Self, cosmic::app::Task<Self::Message>) {
-        let cause = flags.error.cause();
         let mut app = Self {
             core,
             error: flags.error,
-            cause,
         };
 
         let mut tasks = vec![];
@@ -62,15 +59,10 @@ impl Application for View {
             )
             .push(widget::text(self.error.to_string()).size(16))
             .push(
-                widget::text_input(
-                    "",
-                    self.cause
-                        .as_deref()
-                        .unwrap_or("No additional information available."),
-                )
-                .label(fl!("cause"))
-                .size(14)
-                .on_input(|_| ()),
+                widget::text_input("", self.error.to_string())
+                    .label(fl!("cause"))
+                    .size(14)
+                    .on_input(|_| ()),
             )
             .padding(20)
             .spacing(16)
@@ -89,6 +81,6 @@ pub fn settings() -> Settings {
         .debug(false)
 }
 
-pub fn flags(error: crate::LocalStorageError) -> Flags {
+pub fn flags(error: crate::Error) -> Flags {
     Flags { error }
 }

@@ -15,21 +15,21 @@ use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 use crate::{
     core::{config, icons},
     fl,
-    storage::models::{self, List, Status},
-    storage::LocalStorage,
+    model::{self, List, Status},
+    services::store::Store,
 };
 
 pub struct Content {
     list: Option<List>,
-    tasks: SlotMap<DefaultKey, models::Task>,
-    sub_tasks: SlotMap<DefaultKey, models::Task>,
+    tasks: SlotMap<DefaultKey, model::Task>,
+    sub_tasks: SlotMap<DefaultKey, model::Task>,
     task_editing: SecondaryMap<DefaultKey, bool>,
     sub_task_editing: SecondaryMap<DefaultKey, bool>,
     task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
     sub_task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
     config: config::TasksConfig,
     input: String,
-    storage: LocalStorage,
+    storage: Store,
     context_menu_open: bool,
     search_bar_visible: bool,
     search_query: String,
@@ -70,9 +70,9 @@ pub enum Message {
     ToggleHideCompleted,
 
     SetList(Option<List>),
-    SetTasks(Vec<models::Task>),
+    SetTasks(Vec<model::Task>),
     SetConfig(config::TasksConfig),
-    RefreshTask(models::Task),
+    RefreshTask(model::Task),
     Empty,
     ContextMenuOpen(bool),
 
@@ -82,9 +82,9 @@ pub enum Message {
 }
 
 pub enum Output {
-    ToggleHideCompleted(models::List),
+    ToggleHideCompleted(model::List),
     Focus(widget::Id),
-    OpenTaskDetails(models::Task),
+    OpenTaskDetails(model::Task),
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -126,7 +126,7 @@ impl MenuAction for SubTaskAction {
 }
 
 impl Content {
-    pub fn new(storage: LocalStorage) -> Self {
+    pub fn new(storage: Store) -> Self {
         Self {
             list: None,
             tasks: SlotMap::new(),
@@ -204,10 +204,10 @@ impl Content {
                 tasks_vec.sort_by(|a, b| b.1.title.to_lowercase().cmp(&a.1.title.to_lowercase()))
             }
             SortType::DateAsc => {
-                tasks_vec.sort_by(|a, b| a.1.created_date_time.cmp(&b.1.created_date_time))
+                tasks_vec.sort_by(|a, b| a.1.creation_date.cmp(&b.1.creation_date))
             }
             SortType::DateDesc => {
-                tasks_vec.sort_by(|a, b| b.1.created_date_time.cmp(&a.1.created_date_time))
+                tasks_vec.sort_by(|a, b| b.1.creation_date.cmp(&a.1.creation_date))
             }
         }
 
@@ -239,7 +239,7 @@ impl Content {
             .into()
     }
 
-    pub fn task_view<'a>(&'a self, id: DefaultKey, task: &'a models::Task) -> Element<'a, Message> {
+    pub fn task_view<'a>(&'a self, id: DefaultKey, task: &'a model::Task) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
 
         let sub_tasks = self
@@ -347,7 +347,7 @@ impl Content {
     pub fn sub_task_view<'a>(
         &'a self,
         id: DefaultKey,
-        task: &'a models::Task,
+        task: &'a model::Task,
     ) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
 
@@ -498,7 +498,7 @@ impl Content {
         .into()
     }
 
-    fn populate_task_slotmap(&mut self, tasks: Vec<models::Task>) {
+    fn populate_task_slotmap(&mut self, tasks: Vec<model::Task>) {
         for task in tasks {
             let task_id = self.tasks.insert(task.clone());
             self.task_input_ids.insert(task_id, widget::Id::unique());
@@ -509,7 +509,7 @@ impl Content {
         }
     }
 
-    fn populate_sub_task_slotmap(&mut self, tasks: Vec<models::Task>) {
+    fn populate_sub_task_slotmap(&mut self, tasks: Vec<model::Task>) {
         for task in tasks {
             let task_id = self.sub_tasks.insert(task.clone());
             self.sub_task_input_ids
@@ -551,7 +551,7 @@ impl Content {
                 match (&self.list, &list) {
                     (Some(current), Some(list)) => {
                         if current.id != list.id {
-                            match self.storage.tasks(list) {
+                            match self.storage.tasks(list.id).load_all() {
                                 Ok(tasks) => {
                                     self.update(Message::SetTasks(tasks));
                                 }
@@ -561,7 +561,7 @@ impl Content {
                             }
                         }
                     }
-                    (None, Some(list)) => match self.storage.tasks(list) {
+                    (None, Some(list)) => match self.storage.tasks(list.id).load_all() {
                         Ok(tasks) => {
                             self.update(Message::SetTasks(tasks));
                         }
@@ -598,9 +598,17 @@ impl Content {
                 None => tracing::warn!("Task with ID {:?} not found", id),
             },
             Message::TaskExpand(default_key) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
                 if let Some(task) = self.tasks.get_mut(default_key) {
                     task.expanded = !task.expanded;
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |task| task.expanded = !task.expanded)
+                    {
                         tracing::error!("Failed to update task: {:?}", error);
                     }
                 }
@@ -608,9 +616,9 @@ impl Content {
             Message::TaskAdd => {
                 if let Some(list) = &self.list {
                     if !self.input.is_empty() {
-                        let task = models::Task::new(self.input.clone(), list.tasks_path());
-                        match self.storage.create_task(&task) {
-                            Ok(task) => {
+                        let task = model::Task::new(self.input.clone());
+                        match self.storage.tasks(list.id).save(&task) {
+                            Ok(_) => {
                                 let id = self.tasks.insert(task);
                                 self.task_input_ids.insert(id, widget::Id::unique());
                                 self.input.clear();
@@ -623,19 +631,37 @@ impl Content {
                 }
             }
             Message::TaskToggleTitleEditMode(id, editing) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 self.task_editing.insert(id, editing);
                 if editing {
                     tasks.push(Output::Focus(self.task_input_ids[id].clone()));
                 } else if let Some(task) = self.tasks.get(id) {
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         tracing::error!("Failed to update task: {:?}", error);
                     }
                 }
             }
             Message::TaskTitleInput(input) => self.input = input,
             Message::TaskTitleSubmit(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.tasks.get(id) {
-                    match self.storage.update_task(task) {
+                    match self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         Ok(_) => {
                             self.task_editing.insert(id, false);
                             tasks.push(Output::Focus(widget::Id::new("new-task-input")));
@@ -650,13 +676,23 @@ impl Content {
                 }
             }
             Message::TaskDelete(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.tasks.remove(id) {
-                    if let Err(error) = self.storage.delete_task(&task) {
+                    if let Err(error) = self.storage.tasks(list.id).delete(task.id) {
                         tracing::error!("Failed to delete task: {:?}", error);
                     }
                 }
             }
             Message::TaskComplete(id, complete) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 let task = self.tasks.get_mut(id);
                 if let Some(task) = task {
                     task.status = if complete {
@@ -664,19 +700,32 @@ impl Content {
                     } else {
                         Status::NotStarted
                     };
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         tracing::error!("Failed to update task: {:?}", error);
                     }
                 }
             }
             Message::TaskAddSubTask(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.tasks.get_mut(id) {
                     task.expanded = true;
-                    let sub_task = models::Task::new("".to_string(), task.sub_tasks_path());
-                    match self.storage.create_task(&sub_task) {
-                        Ok(sub_task) => {
+                    let sub_task = model::Task::new("".to_string());
+                    match self.storage.tasks(list.id).save(&sub_task) {
+                        Ok(_) => {
                             task.sub_tasks.push(sub_task.clone());
-                            if let Err(error) = self.storage.update_task(task) {
+                            if let Err(error) = self
+                                .storage
+                                .tasks(list.id)
+                                .update(task.id, |t| *t = task.clone())
+                            {
                                 tracing::error!("Failed to update task with sub-task: {:?}", error);
                             }
 
@@ -699,18 +748,36 @@ impl Content {
                 }
             }
             Message::SubTaskToggleTitleEditMode(id, editing) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 self.sub_task_editing.insert(id, editing);
                 if editing {
                     tasks.push(Output::Focus(self.sub_task_input_ids[id].clone()));
                 } else if let Some(task) = self.sub_tasks.get(id) {
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         tracing::error!("Failed to update sub-task: {:?}", error);
                     }
                 }
             }
             Message::SubTaskTitleSubmit(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.sub_tasks.get(id) {
-                    match self.storage.update_task(task) {
+                    match self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         Ok(_) => {
                             self.sub_task_editing.insert(id, false);
                             tasks.push(Output::Focus(widget::Id::new("new-task-input")));
@@ -720,9 +787,18 @@ impl Content {
                 }
             }
             Message::SubTaskTitleUpdate(id, title) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.sub_tasks.get_mut(id) {
                     task.title = title;
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         tracing::error!("Failed to update sub-task: {:?}", error);
                     }
                 }
@@ -735,13 +811,22 @@ impl Content {
                 }
             }
             Message::SubTaskAddSubTask(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.sub_tasks.get_mut(id) {
                     task.expanded = true;
-                    let sub_task = models::Task::new("".to_string(), task.sub_tasks_path());
-                    match self.storage.create_task(&sub_task) {
-                        Ok(sub_task) => {
+                    let sub_task = model::Task::new("".to_string());
+                    match self.storage.tasks(list.id).save(&sub_task) {
+                        Ok(_) => {
                             task.sub_tasks.push(sub_task.clone());
-                            if let Err(error) = self.storage.update_task(task) {
+                            if let Err(error) = self
+                                .storage
+                                .tasks(list.id)
+                                .update(task.id, |t| *t = task.clone())
+                            {
                                 tracing::error!("Failed to update task with sub-task: {:?}", error);
                             }
 
@@ -758,6 +843,11 @@ impl Content {
                 }
             }
             Message::SubTaskComplete(id, complete) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 let task = self.sub_tasks.get_mut(id);
                 if let Some(task) = task {
                     task.status = if complete {
@@ -765,22 +855,40 @@ impl Content {
                     } else {
                         Status::NotStarted
                     };
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         tracing::error!("Failed to update sub-task: {:?}", error);
                     }
                 }
             }
             Message::SubTaskDelete(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.sub_tasks.remove(id) {
-                    if let Err(error) = self.storage.delete_task(&task) {
+                    if let Err(error) = self.storage.tasks(list.id).delete(task.id) {
                         tracing::error!("Failed to delete sub-task: {:?}", error);
                     }
                 }
             }
             Message::SubTaskExpand(id) => {
+                let Some(list) = &self.list else {
+                    tracing::warn!("No list selected");
+                    return tasks;
+                };
+
                 if let Some(task) = self.sub_tasks.get_mut(id) {
                     task.expanded = !task.expanded;
-                    if let Err(error) = self.storage.update_task(task) {
+                    if let Err(error) = self
+                        .storage
+                        .tasks(list.id)
+                        .update(task.id, |t| *t = task.clone())
+                    {
                         tracing::error!("Failed to update sub-task: {:?}", error);
                     }
                 }
