@@ -448,11 +448,11 @@ impl Application for AppModel {
                     Ok(exe) => match process::Command::new(&exe).spawn() {
                         Ok(_) => {}
                         Err(err) => {
-                            eprintln!("failed to execute {exe:?}: {err}");
+                            tracing::error!("failed to execute {exe:?}: {err}");
                         }
                     },
                     Err(err) => {
-                        eprintln!("failed to get current executable path: {err}");
+                        tracing::error!("failed to get current executable path: {err}");
                     }
                 },
                 MenuAction::NewList => {

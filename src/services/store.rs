@@ -53,6 +53,7 @@ pub struct ListStore<'s> {
 }
 
 impl ListStore<'_> {
+    #[allow(dead_code)]
     pub fn get(&self, list_id: Uuid) -> Result<List> {
         self.load_all()?
             .into_iter()
@@ -154,8 +155,8 @@ impl TaskStore<'_> {
 
             match fs::read_to_string(&path).map(|s| ron::from_str::<Task>(&s)) {
                 Ok(Ok(task)) => tasks.push(task),
-                Ok(Err(e)) => eprintln!("warn: skipping {:?}: {e}", path.file_name()),
-                Err(e) => eprintln!("warn: could not read {:?}: {e}", path.file_name()),
+                Ok(Err(e)) => tracing::error!("warn: skipping {:?}: {e}", path.file_name()),
+                Err(e) => tracing::error!("warn: could not read {:?}: {e}", path.file_name()),
             }
         }
 
@@ -192,6 +193,7 @@ impl TaskStore<'_> {
         fs::remove_file(&path).map_err(|_| Error::Store(StoreError::TaskNotFound(task_id)))
     }
 
+    #[allow(dead_code)]
     pub fn query<F>(&self, predicate: F) -> Result<Vec<Task>>
     where
         F: Fn(&Task) -> bool,

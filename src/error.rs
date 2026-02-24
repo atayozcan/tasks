@@ -19,6 +19,9 @@ pub enum Error {
 
     #[error("{0}")]
     Store(#[from] StoreError),
+
+    #[error("Migration failed: {0}")]
+    MigrationFailed(String),
 }
 
 #[derive(Debug, Error)]

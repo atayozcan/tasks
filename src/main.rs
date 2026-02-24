@@ -6,6 +6,8 @@ mod model;
 mod pages;
 mod services;
 
+mod migrations;
+
 pub use error::*;
 
 use cosmic::{
@@ -34,7 +36,7 @@ pub fn main() -> Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("tasks=info")),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -42,6 +44,17 @@ pub fn main() -> Result<()> {
     // Determine the project directories for this application.
     let project = ProjectDirs::from("dev", "edfloreshz", "Tasks")
         .expect("Failed to determine project directories");
+
+    // Run migrations to ensure old data is converted to the new format before starting the app.
+    let old_base_dir = project
+        .data_dir()
+        .parent()
+        .expect("Failed to determine previous app directory")
+        .join(app::AppModel::APP_ID);
+
+    let new_base_dir = project.data_dir();
+
+    migrations::migrate(old_base_dir, new_base_dir)?;
 
     // Store is used for persistent storage of tasks and app state.
     let store = Store::open(project.data_dir())?;
