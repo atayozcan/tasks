@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use cosmic::{
+    cosmic_theme::Spacing,
     iced::{
         alignment::{Horizontal, Vertical},
         Alignment, Length, Subscription,
@@ -110,278 +111,28 @@ impl MenuAction for TaskAction {
 }
 
 impl Content {
-    pub fn new(storage: Store, config: config::AppConfig) -> Self {
-        Self {
-            selected_list: None,
-            tasks: SlotMap::new(),
-            editing: SecondaryMap::new(),
-            inputs: SecondaryMap::new(),
-            add_task_input: String::new(),
-            config: config,
-            store: storage,
-            context_menu_open: false,
-            search_bar_visible: false,
-            search_query: String::new(),
-            sort_type: SortType::DateAsc,
-        }
-    }
-
-    fn list_header<'a>(&'a self, list: &'a List) -> Element<'a, Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
 
-        let hide_completed_active = list.hide_completed || self.config.hide_completed;
-        let mut hide_completed_button =
-            widget::button::icon(widget::icon::from_name("check-round-outline-symbolic").size(18))
-                .selected(hide_completed_active)
-                .padding(spacing.space_xxs);
-
-        if hide_completed_active {
-            hide_completed_button = hide_completed_button.class(cosmic::style::Button::Suggested);
-        }
-
-        hide_completed_button = hide_completed_button.on_press(Message::ToggleHideCompleted);
-
-        let search_button =
-            widget::button::icon(widget::icon::from_name("edit-find-symbolic").size(18))
-                .selected(self.search_bar_visible)
-                .padding(spacing.space_xxs)
-                .on_press(Message::ToggleSearchBar);
-
-        let icon = widget::icon::from_name(list.icon.as_deref().unwrap_or("view-list-symbolic"))
-            .size(spacing.space_m);
-        widget::row::with_capacity(4)
-            .align_y(Alignment::Center)
-            .spacing(spacing.space_s)
-            .padding([spacing.space_none, spacing.space_xxs])
-            .push(icon)
-            .push(widget::text::body(&list.name).size(24).width(Length::Fill))
-            .push(hide_completed_button)
-            .push(search_button)
-            .into()
-    }
-
-    pub fn list_view<'a>(&'a self, list: &'a List) -> Element<'a, Message> {
-        let spacing = theme::active().cosmic().spacing;
-
-        let mut column = widget::column::with_capacity(3);
-        column = column.push(self.list_header(list));
-
-        if self.search_bar_visible {
-            column = column.push(
-                widget::text_input(fl!("search-tasks"), &self.search_query)
-                    .on_input(Message::SearchQueryChanged)
-                    .width(Length::Fill)
-                    .padding([spacing.space_xxs, spacing.space_xxs]),
-            );
-        }
-
-        let mut tasks_vec: Vec<_> = self.tasks.iter().collect();
-        match self.sort_type {
-            SortType::NameAsc => {
-                tasks_vec.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()))
-            }
-            SortType::NameDesc => {
-                tasks_vec.sort_by(|a, b| b.1.title.to_lowercase().cmp(&a.1.title.to_lowercase()))
-            }
-            SortType::DateAsc => {
-                tasks_vec.sort_by(|a, b| a.1.creation_date.cmp(&b.1.creation_date))
-            }
-            SortType::DateDesc => {
-                tasks_vec.sort_by(|a, b| b.1.creation_date.cmp(&a.1.creation_date))
-            }
-        }
-
-        let filtered_tasks: Vec<_> = tasks_vec
-            .into_iter()
-            .filter(|(_, task)| {
-                // Only show top-level tasks (no parent)
-                task.parent_id.is_none()
-                // Search filter
-                && (!self.search_bar_visible || self.search_query.is_empty() || task.title.to_lowercase().contains(&self.search_query.to_lowercase()))
-                // Hide completed filter
-                && (!(list.hide_completed || self.config.hide_completed) || task.status != Status::Completed)
-            })
-            .map(|(id, task)| self.task_view(id, task))
-            .collect();
-
-        if filtered_tasks.is_empty() && self.search_query.is_empty() {
-            return self.empty(list);
-        }
-
-        let items = widget::column::with_children(filtered_tasks).spacing(spacing.space_s);
-
-        column
-            .push(items)
-            .padding([spacing.space_none, spacing.space_l])
-            .spacing(spacing.space_s)
-            .apply(widget::container)
-            .height(Length::Shrink)
-            .apply(widget::scrollable)
-            .height(Length::Fill)
-            .into()
-    }
-
-    pub fn task_view<'a>(&'a self, id: DefaultKey, task: &'a model::Task) -> Element<'a, Message> {
-        let spacing = theme::active().cosmic().spacing;
-
-        // Get direct children of this task
-        let sub_tasks: Vec<_> = self
-            .tasks
-            .iter()
-            .filter(|(_, sub_task)| sub_task.parent_id == Some(task.id))
-            .collect();
-
-        let item_checkbox = widget::checkbox("", task.status == Status::Completed)
-            .on_toggle(move |value| Message::TaskComplete(id, value));
-
-        let not_empty = !sub_tasks.is_empty();
-        let icon = if task.expanded {
-            "go-up-symbolic"
-        } else {
-            "go-down-symbolic"
+        let Some(ref list) = self.selected_list else {
+            return self.create_no_list_selected_view();
         };
-        let expand_button = not_empty.then(|| {
-            widget::button::icon(widget::icon::from_name(icon).size(18))
-                .padding(spacing.space_xxs)
-                .on_press(Message::TaskExpand(id))
-        });
-
-        let more_button = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
-            Element::from(
-                cosmic::widget::button::icon(
-                    widget::icon::from_name("view-more-symbolic").size(18),
-                )
-                .on_press(Message::Empty),
-            ),
-            widget::menu::items(
-                &HashMap::new(),
-                vec![
-                    widget::menu::Item::Button(fl!("edit"), None, TaskAction::Edit(id)),
-                    widget::menu::Item::Button(
-                        fl!("add-sub-task"),
-                        None,
-                        TaskAction::AddSubTask(id),
-                    ),
-                    widget::menu::Item::Button(fl!("delete"), None, TaskAction::Delete(id)),
-                ],
-            ),
-        )])
-        .item_height(widget::menu::ItemHeight::Dynamic(40))
-        .item_width(widget::menu::ItemWidth::Uniform(260))
-        .spacing(4.0);
-
-        let (completed, total) = sub_tasks.iter().fold((0, 0), |acc, (_, subtask)| {
-            if subtask.status == Status::Completed {
-                (acc.0 + 1, acc.1 + 1)
-            } else {
-                (acc.0, acc.1 + 1)
-            }
-        });
-
-        let subtask_count = if total > 0 {
-            Some(widget::text(format!("{}/{}", completed, total)))
-        } else {
-            None
-        };
-
-        let task_item_text = widget::editable_input(
-            "",
-            &task.title,
-            matches!(
-                self.editing.get(id),
-                Some(EditState::Entering) | Some(EditState::Editing)
-            ),
-            move |editing| Message::TaskToggleTitleEditMode(id, editing),
-        )
-        .size(13)
-        .trailing_icon(widget::column().into())
-        .id(self.inputs[id].clone())
-        .on_submit(move |_| Message::TaskTitleSubmit(id))
-        .on_input(move |text| Message::TaskTitleUpdate(id, text));
-
-        let row = widget::row::with_capacity(5)
-            .align_y(Alignment::Center)
-            .spacing(spacing.space_xxxs)
-            .padding([spacing.space_xxs, spacing.space_s])
-            .push(item_checkbox)
-            .push(task_item_text)
-            .push_maybe(expand_button)
-            .push_maybe(subtask_count)
-            .push(more_button);
-
-        let mut column = widget::column::with_capacity(2).push(row);
-
-        if task.expanded && !sub_tasks.is_empty() {
-            let subtask_elements = sub_tasks
-                .iter()
-                .map(|(sub_id, sub_task)| {
-                    widget::container(self.task_view(*sub_id, sub_task))
-                        .padding([0, 0, 0, spacing.space_xs])
-                        .into()
-                })
-                .collect::<Vec<_>>();
-            column = column.push(widget::column::with_children(subtask_elements));
-        }
-
-        widget::container(column)
-            .class(cosmic::style::Container::ContextDrawer)
-            .into()
-    }
-
-    pub fn empty<'a>(&'a self, list: &'a List) -> Element<'a, Message> {
-        let spacing = theme::active().cosmic().spacing;
-
-        let container = widget::container(
-            widget::column::with_children(vec![
-                widget::icon::from_name("task-past-due-symbolic")
-                    .size(56)
-                    .into(),
-                widget::text::title1(fl!("no-tasks")).into(),
-                widget::text(fl!("no-tasks-suggestion")).into(),
-            ])
-            .spacing(10)
-            .align_x(Alignment::Center),
-        )
-        .align_y(Vertical::Center)
-        .align_x(Horizontal::Center)
-        .height(Length::Fill)
-        .width(Length::Fill);
 
         widget::column::with_capacity(2)
-            .push(self.list_header(list))
-            .push(container)
-            .padding([spacing.space_none, spacing.space_l])
-            .spacing(spacing.space_s)
+            .push(self.list_view(list))
+            .push(self.new_task_view())
+            .spacing(spacing.space_xxs)
+            .max_width(800.)
+            .apply(widget::container)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .center(if self.context_menu_open {
+                Length::Shrink
+            } else {
+                Length::Fill
+            })
+            .padding([spacing.space_xxs, spacing.space_none])
             .into()
-    }
-
-    pub fn new_task_view(&self) -> Element<'_, Message> {
-        let spacing = theme::active().cosmic().spacing;
-        row(vec![
-            widget::text_input(fl!("add-new-task"), &self.add_task_input)
-                .id(widget::Id::new("new-task-input"))
-                .on_input(Message::TaskTitleInput)
-                .on_submit(|_| Message::TaskAdd)
-                .width(Length::Fill)
-                .into(),
-            widget::button::icon(widget::icon::from_name("mail-send-symbolic").size(18))
-                .padding(spacing.space_xxs)
-                .class(cosmic::style::Button::Suggested)
-                .on_press(Message::TaskAdd)
-                .into(),
-        ])
-        .padding(spacing.space_xxs)
-        .spacing(spacing.space_xxs)
-        .align_y(Alignment::Center)
-        .into()
-    }
-
-    fn populate_task_slotmap(&mut self, tasks: Vec<model::Task>) {
-        for task in tasks {
-            let task_id = self.tasks.insert(task);
-            self.inputs.insert(task_id, widget::Id::unique());
-            self.editing.insert(task_id, EditState::Idle);
-        }
     }
 
     pub fn update(&mut self, message: Message) -> Option<Output> {
@@ -644,46 +395,436 @@ impl Content {
         output
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
+}
+
+impl Content {
+    pub fn new(storage: Store, config: config::AppConfig) -> Self {
+        Self {
+            selected_list: None,
+            tasks: SlotMap::new(),
+            editing: SecondaryMap::new(),
+            inputs: SecondaryMap::new(),
+            add_task_input: String::new(),
+            config: config,
+            store: storage,
+            context_menu_open: false,
+            search_bar_visible: false,
+            search_query: String::new(),
+            sort_type: SortType::DateAsc,
+        }
+    }
+
+    /// Creates the main list view with tasks
+    pub fn list_view<'a>(&'a self, list: &'a List) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
 
-        let Some(ref list) = self.selected_list else {
-            return widget::container(
-                widget::column::with_children(vec![
-                    widget::icon::from_name("applications-office-symbolic")
-                        .size(56)
-                        .into(),
-                    widget::text::title1(fl!("no-list-selected")).into(),
-                    widget::text(fl!("no-list-suggestion")).into(),
-                ])
-                .spacing(10)
-                .align_x(Alignment::Center),
-            )
-            .align_y(Vertical::Center)
-            .align_x(Horizontal::Center)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into();
-        };
+        let mut column = widget::column::with_capacity(3);
+        column = column.push(self.list_header(list));
 
-        widget::column::with_capacity(2)
-            .push(self.list_view(list))
-            .push(self.new_task_view())
-            .spacing(spacing.space_xxs)
-            .max_width(800.)
+        if self.search_bar_visible {
+            column = column.push(self.create_search_input(&spacing));
+        }
+
+        let sorted_tasks = self.sort_tasks();
+        let filtered_tasks = self.filter_and_render_tasks(list, sorted_tasks);
+
+        if filtered_tasks.is_empty() && self.search_query.is_empty() {
+            return self.empty(list);
+        }
+
+        let items = widget::column::with_children(filtered_tasks).spacing(spacing.space_s);
+
+        column
+            .push(items)
+            .padding([spacing.space_none, spacing.space_l])
+            .spacing(spacing.space_s)
             .apply(widget::container)
+            .height(Length::Shrink)
+            .apply(widget::scrollable)
             .height(Length::Fill)
-            .width(Length::Fill)
-            .center(if self.context_menu_open {
-                Length::Shrink
-            } else {
-                Length::Fill
-            })
-            .padding([spacing.space_xxs, spacing.space_none])
             .into()
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+    /// Creates the header row for a list with title and action buttons
+    fn list_header<'a>(&'a self, list: &'a List) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+
+        let hide_completed_button = self.create_hide_completed_button(list, &spacing);
+        let search_button = self.create_search_button(&spacing);
+        let list_icon = self.create_list_icon(list, &spacing);
+
+        widget::row::with_capacity(4)
+            .align_y(Alignment::Center)
+            .spacing(spacing.space_s)
+            .padding([spacing.space_none, spacing.space_xxs])
+            .push(list_icon)
+            .push(widget::text::body(&list.name).size(24).width(Length::Fill))
+            .push(hide_completed_button)
+            .push(search_button)
+            .into()
+    }
+
+    /// Creates the search input field
+    fn create_search_input<'a>(&'a self, spacing: &Spacing) -> Element<'a, Message> {
+        widget::text_input(fl!("search-tasks"), &self.search_query)
+            .on_input(Message::SearchQueryChanged)
+            .width(Length::Fill)
+            .padding([spacing.space_xxs, spacing.space_xxs])
+            .into()
+    }
+
+    /// Creates the hide completed tasks button
+    fn create_hide_completed_button<'a>(
+        &'a self,
+        list: &'a List,
+        spacing: &Spacing,
+    ) -> Element<'a, Message> {
+        let is_active = list.hide_completed || self.config.hide_completed;
+        let mut button =
+            widget::button::icon(widget::icon::from_name("check-round-outline-symbolic").size(18))
+                .selected(is_active)
+                .padding(spacing.space_xxs);
+
+        if is_active {
+            button = button.class(cosmic::style::Button::Suggested);
+        }
+
+        button.on_press(Message::ToggleHideCompleted).into()
+    }
+
+    /// Creates the search toggle button
+    fn create_search_button<'a>(&'a self, spacing: &Spacing) -> Element<'a, Message> {
+        widget::button::icon(widget::icon::from_name("edit-find-symbolic").size(18))
+            .selected(self.search_bar_visible)
+            .padding(spacing.space_xxs)
+            .on_press(Message::ToggleSearchBar)
+            .into()
+    }
+
+    /// Creates the list icon
+    fn create_list_icon<'a>(&'a self, list: &'a List, spacing: &Spacing) -> Element<'a, Message> {
+        widget::icon::from_name(list.icon.as_deref().unwrap_or("view-list-symbolic"))
+            .size(spacing.space_m)
+            .into()
+    }
+
+    /// Sorts tasks according to the current sort type
+    fn sort_tasks(&self) -> Vec<(DefaultKey, &model::Task)> {
+        let mut tasks_vec: Vec<_> = self.tasks.iter().collect();
+
+        match self.sort_type {
+            SortType::NameAsc => {
+                tasks_vec.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()))
+            }
+            SortType::NameDesc => {
+                tasks_vec.sort_by(|a, b| b.1.title.to_lowercase().cmp(&a.1.title.to_lowercase()))
+            }
+            SortType::DateAsc => {
+                tasks_vec.sort_by(|a, b| a.1.creation_date.cmp(&b.1.creation_date))
+            }
+            SortType::DateDesc => {
+                tasks_vec.sort_by(|a, b| b.1.creation_date.cmp(&a.1.creation_date))
+            }
+        }
+
+        tasks_vec
+    }
+
+    /// Filters tasks and renders them as UI elements
+    fn filter_and_render_tasks<'a>(
+        &'a self,
+        list: &'a List,
+        sorted_tasks: Vec<(DefaultKey, &'a model::Task)>,
+    ) -> Vec<Element<'a, Message>> {
+        sorted_tasks
+            .into_iter()
+            .filter(|(_, task)| self.should_show_task(list, task))
+            .map(|(id, task)| self.task_view(id, task))
+            .collect()
+    }
+
+    /// Determines if a task should be shown based on filters
+    fn should_show_task(&self, list: &List, task: &model::Task) -> bool {
+        // Only show top-level tasks (no parent)
+        let is_top_level = task.parent_id.is_none();
+
+        // Check search filter
+        let matches_search = !self.search_bar_visible
+            || self.search_query.is_empty()
+            || task
+                .title
+                .to_lowercase()
+                .contains(&self.search_query.to_lowercase());
+
+        // Check hide completed filter
+        let should_hide_completed = list.hide_completed || self.config.hide_completed;
+        let show_despite_completion = !should_hide_completed || task.status != Status::Completed;
+
+        is_top_level && matches_search && show_despite_completion
+    }
+
+    /// Creates the view for a single task (with optional subtasks)
+    pub fn task_view<'a>(&'a self, id: DefaultKey, task: &'a model::Task) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+
+        let sub_tasks = self.get_subtasks(task);
+        let task_row = self.create_task_row(id, task, &sub_tasks, &spacing);
+
+        let mut column = widget::column::with_capacity(2).push(task_row);
+
+        if task.expanded && !sub_tasks.is_empty() {
+            column = column.push(self.create_subtasks_view(&sub_tasks, &spacing));
+        }
+
+        widget::container(column)
+            .class(cosmic::style::Container::ContextDrawer)
+            .into()
+    }
+
+    /// Gets all direct subtasks of a task
+    fn get_subtasks(&self, task: &model::Task) -> Vec<(DefaultKey, &model::Task)> {
+        self.tasks
+            .iter()
+            .filter(|(_, sub_task)| sub_task.parent_id == Some(task.id))
+            .collect()
+    }
+
+    /// Creates the main row for a task with all controls
+    fn create_task_row<'a>(
+        &'a self,
+        id: DefaultKey,
+        task: &'a model::Task,
+        sub_tasks: &[(DefaultKey, &model::Task)],
+        spacing: &Spacing,
+    ) -> Element<'a, Message> {
+        let checkbox = self.create_task_checkbox(id, task);
+        let title_input = self.create_task_title_input(id, task);
+        let expand_button = self.create_expand_button(id, task, sub_tasks, spacing);
+        let subtask_count = self.create_subtask_counter(sub_tasks);
+        let menu = self.create_task_menu(id);
+
+        widget::row::with_capacity(5)
+            .align_y(Alignment::Center)
+            .spacing(spacing.space_xxxs)
+            .padding([spacing.space_xxs, spacing.space_s])
+            .push(checkbox)
+            .push(title_input)
+            .push_maybe(expand_button)
+            .push_maybe(subtask_count)
+            .push(menu)
+            .into()
+    }
+
+    /// Creates a checkbox for marking a task as complete
+    fn create_task_checkbox<'a>(
+        &'a self,
+        id: DefaultKey,
+        task: &'a model::Task,
+    ) -> Element<'a, Message> {
+        widget::checkbox("", task.status == Status::Completed)
+            .on_toggle(move |value| Message::TaskComplete(id, value))
+            .into()
+    }
+
+    /// Creates the editable title input for a task
+    fn create_task_title_input<'a>(
+        &'a self,
+        id: DefaultKey,
+        task: &'a model::Task,
+    ) -> Element<'a, Message> {
+        let is_editing = matches!(
+            self.editing.get(id),
+            Some(EditState::Entering) | Some(EditState::Editing)
+        );
+
+        widget::editable_input("", &task.title, is_editing, move |editing| {
+            Message::TaskToggleTitleEditMode(id, editing)
+        })
+        .size(13)
+        .trailing_icon(widget::column().into())
+        .id(self.inputs[id].clone())
+        .on_submit(move |_| Message::TaskTitleSubmit(id))
+        .on_input(move |text| Message::TaskTitleUpdate(id, text))
+        .into()
+    }
+
+    /// Creates an expand/collapse button for tasks with subtasks
+    fn create_expand_button<'a>(
+        &'a self,
+        id: DefaultKey,
+        task: &'a model::Task,
+        sub_tasks: &[(DefaultKey, &model::Task)],
+        spacing: &Spacing,
+    ) -> Option<Element<'a, Message>> {
+        if sub_tasks.is_empty() {
+            return None;
+        }
+
+        let icon = if task.expanded {
+            "go-up-symbolic"
+        } else {
+            "go-down-symbolic"
+        };
+
+        Some(
+            widget::button::icon(widget::icon::from_name(icon).size(18))
+                .padding(spacing.space_xxs)
+                .on_press(Message::TaskExpand(id))
+                .into(),
+        )
+    }
+
+    /// Creates a counter showing completed/total subtasks
+    fn create_subtask_counter<'a>(
+        &'a self,
+        sub_tasks: &[(DefaultKey, &model::Task)],
+    ) -> Option<Element<'a, Message>> {
+        if sub_tasks.is_empty() {
+            return None;
+        }
+
+        let (completed, total) = sub_tasks.iter().fold((0, 0), |acc, (_, subtask)| {
+            if subtask.status == Status::Completed {
+                (acc.0 + 1, acc.1 + 1)
+            } else {
+                (acc.0, acc.1 + 1)
+            }
+        });
+
+        Some(widget::text(format!("{}/{}", completed, total)).into())
+    }
+
+    /// Creates the context menu for task actions
+    fn create_task_menu<'a>(&'a self, id: DefaultKey) -> Element<'a, Message> {
+        widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
+            Element::from(
+                cosmic::widget::button::icon(
+                    widget::icon::from_name("view-more-symbolic").size(18),
+                )
+                .on_press(Message::Empty),
+            ),
+            widget::menu::items(
+                &HashMap::new(),
+                vec![
+                    widget::menu::Item::Button(fl!("edit"), None, TaskAction::Edit(id)),
+                    widget::menu::Item::Button(
+                        fl!("add-sub-task"),
+                        None,
+                        TaskAction::AddSubTask(id),
+                    ),
+                    widget::menu::Item::Button(fl!("delete"), None, TaskAction::Delete(id)),
+                ],
+            ),
+        )])
+        .item_height(widget::menu::ItemHeight::Dynamic(40))
+        .item_width(widget::menu::ItemWidth::Uniform(260))
+        .spacing(4.0)
+        .into()
+    }
+
+    /// Creates the view for rendering subtasks
+    fn create_subtasks_view<'a>(
+        &'a self,
+        sub_tasks: &[(DefaultKey, &'a model::Task)],
+        spacing: &Spacing,
+    ) -> Element<'a, Message> {
+        let subtask_elements = sub_tasks
+            .iter()
+            .map(|(sub_id, sub_task)| {
+                widget::container(self.task_view(*sub_id, sub_task))
+                    .padding([0, 0, 0, spacing.space_xs])
+                    .into()
+            })
+            .collect::<Vec<_>>();
+
+        widget::column::with_children(subtask_elements).into()
+    }
+
+    /// Creates an empty state view when a list has no tasks
+    pub fn empty<'a>(&'a self, list: &'a List) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+
+        let empty_state = self.create_empty_state_content();
+
+        widget::column::with_capacity(2)
+            .push(self.list_header(list))
+            .push(empty_state)
+            .padding([spacing.space_none, spacing.space_l])
+            .spacing(spacing.space_s)
+            .into()
+    }
+
+    /// Creates the empty state content
+    fn create_empty_state_content<'a>(&'a self) -> Element<'a, Message> {
+        widget::container(
+            widget::column::with_children(vec![
+                widget::icon::from_name("task-past-due-symbolic")
+                    .size(56)
+                    .into(),
+                widget::text::title1(fl!("no-tasks")).into(),
+                widget::text(fl!("no-tasks-suggestion")).into(),
+            ])
+            .spacing(10)
+            .align_x(Alignment::Center),
+        )
+        .align_y(Vertical::Center)
+        .align_x(Horizontal::Center)
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
+    }
+
+    /// Creates the input field for adding new tasks
+    pub fn new_task_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+
+        let input = widget::text_input(fl!("add-new-task"), &self.add_task_input)
+            .id(widget::Id::new("new-task-input"))
+            .on_input(Message::TaskTitleInput)
+            .on_submit(|_| Message::TaskAdd)
+            .width(Length::Fill);
+
+        let submit_button =
+            widget::button::icon(widget::icon::from_name("mail-send-symbolic").size(18))
+                .padding(spacing.space_xxs)
+                .class(cosmic::style::Button::Suggested)
+                .on_press(Message::TaskAdd);
+
+        row(vec![input.into(), submit_button.into()])
+            .padding(spacing.space_xxs)
+            .spacing(spacing.space_xxs)
+            .align_y(Alignment::Center)
+            .into()
+    }
+
+    fn populate_task_slotmap(&mut self, tasks: Vec<model::Task>) {
+        for task in tasks {
+            let task_id = self.tasks.insert(task);
+            self.inputs.insert(task_id, widget::Id::unique());
+            self.editing.insert(task_id, EditState::Idle);
+        }
+    }
+
+    /// Creates the view shown when no list is selected
+    fn create_no_list_selected_view<'a>(&'a self) -> Element<'a, Message> {
+        widget::container(
+            widget::column::with_children(vec![
+                widget::icon::from_name("applications-office-symbolic")
+                    .size(56)
+                    .into(),
+                widget::text::title1(fl!("no-list-selected")).into(),
+                widget::text(fl!("no-list-suggestion")).into(),
+            ])
+            .spacing(10)
+            .align_x(Alignment::Center),
+        )
+        .align_y(Vertical::Center)
+        .align_x(Horizontal::Center)
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
     }
 }
