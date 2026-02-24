@@ -1,11 +1,9 @@
-use crate::{
-    app::{context::ContextPage, Message},
-    model::List,
-};
 use cosmic::{
     iced::keyboard::{Key, Modifiers},
-    widget::{self, menu::Action, segmented_button},
+    widget::{self, menu::Action},
 };
+
+use crate::app::core::{ContextPage, Message};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuAction {
@@ -32,14 +30,6 @@ pub enum ApplicationAction {
     Focus(widget::Id),
 }
 
-#[derive(Debug, Clone)]
-pub enum TasksAction {
-    PopulateLists(Vec<List>),
-    AddList(List),
-    DeleteList(Option<segmented_button::Entity>),
-    FetchLists,
-}
-
 impl Action for MenuAction {
     type Message = Message;
     fn message(&self) -> Self::Message {
@@ -48,21 +38,5 @@ impl Action for MenuAction {
             MenuAction::Settings => Message::ToggleContextPage(ContextPage::Settings),
             action => Message::Menu(*action),
         }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum NavMenuAction {
-    Rename(segmented_button::Entity),
-    SetIcon(segmented_button::Entity),
-    Export(segmented_button::Entity),
-    Delete(segmented_button::Entity),
-}
-
-impl Action for NavMenuAction {
-    type Message = cosmic::Action<Message>;
-
-    fn message(&self) -> Self::Message {
-        cosmic::Action::App(Message::NavMenu(*self))
     }
 }

@@ -11,11 +11,11 @@ use cosmic::{
 };
 
 use crate::{
-    app::{MenuAction, Message},
+    app::{core::Message, ui::MenuAction},
     fl,
 };
 
-use crate::core::config::AppConfig;
+use crate::config::AppConfig;
 
 pub fn menu_bar<'a>(
     key_binds: &HashMap<KeyBind, MenuAction>,

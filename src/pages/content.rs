@@ -14,8 +14,7 @@ use cosmic::{
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 
 use crate::{
-    core::config,
-    fl,
+    config, fl,
     model::{self, List, Status},
     services::store::Store,
 };

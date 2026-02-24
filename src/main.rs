@@ -1,27 +1,27 @@
 mod app;
-mod core;
+mod config;
 mod error;
 mod i18n;
+mod migrations;
 mod model;
 mod pages;
 mod services;
 
-mod migrations;
-
+use cosmic::cosmic_config::CosmicConfigEntry;
 pub use error::*;
 
+use cosmic::Application;
 use cosmic::{
     app::Settings,
     cosmic_config::Config,
     iced::{Limits, Size},
 };
-use cosmic::{cosmic_config::CosmicConfigEntry, Application};
 use directories::ProjectDirs;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    app::{AppModel, Flags},
-    core::config::{AppConfig, CONFIG_VERSION},
+    app::AppModel,
+    config::{AppConfig, CONFIG_VERSION},
     services::store::Store,
 };
 
@@ -78,7 +78,7 @@ pub fn main() -> Result<()> {
         .debug(false);
 
     // Get the application flags, which include the config handler, app config, and store.
-    let flags = Flags {
+    let flags = app::Flags {
         handler,
         config,
         store,

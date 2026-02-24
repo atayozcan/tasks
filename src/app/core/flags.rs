@@ -1,4 +1,4 @@
-use crate::{core::config::AppConfig, services::store::Store};
+use crate::{config::AppConfig, services::store::Store};
 use cosmic::cosmic_config::Config;
 
 #[derive(Clone, Debug)]
