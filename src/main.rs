@@ -18,7 +18,7 @@ use directories::ProjectDirs;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    app::{Flags, AppModel},
+    app::{AppModel, Flags},
     core::config::{AppConfig, CONFIG_VERSION},
     services::store::Store,
 };

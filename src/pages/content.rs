@@ -34,18 +34,16 @@ enum EditState {
 }
 
 pub struct Content {
-    list: Option<List>,
+    selected_list: Option<List>,
     tasks: SlotMap<DefaultKey, model::Task>,
-    sub_tasks: SlotMap<DefaultKey, model::Task>,
-    task_editing: SecondaryMap<DefaultKey, EditState>,
-    sub_task_editing: SecondaryMap<DefaultKey, EditState>,
-    task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
-    sub_task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
+    editing: SecondaryMap<DefaultKey, EditState>,
+    inputs: SecondaryMap<DefaultKey, widget::Id>,
     config: config::AppConfig,
-    input: String,
     store: Store,
+
     context_menu_open: bool,
     search_bar_visible: bool,
+    add_task_input: String,
     search_query: String,
     sort_type: SortType,
 }
@@ -71,15 +69,6 @@ pub enum Message {
     TaskOpenDetails(DefaultKey),
     TaskTitleSubmit(DefaultKey),
     TaskTitleUpdate(DefaultKey, String),
-
-    SubTaskExpand(DefaultKey),
-    SubTaskAddSubTask(DefaultKey),
-    SubTaskComplete(DefaultKey, bool),
-    SubTaskDelete(DefaultKey),
-    SubTaskToggleTitleEditMode(DefaultKey, bool),
-    SubTaskTitleSubmit(DefaultKey),
-    SubTaskTitleUpdate(DefaultKey, String),
-    SubTaskOpenDetails(DefaultKey),
 
     ToggleHideCompleted,
 
@@ -120,36 +109,14 @@ impl MenuAction for TaskAction {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum SubTaskAction {
-    AddSubTask(DefaultKey),
-    Edit(DefaultKey),
-    Delete(DefaultKey),
-}
-
-impl MenuAction for SubTaskAction {
-    type Message = Message;
-
-    fn message(&self) -> Self::Message {
-        match self {
-            SubTaskAction::Edit(id) => Message::SubTaskOpenDetails(*id),
-            SubTaskAction::AddSubTask(id) => Message::SubTaskAddSubTask(*id),
-            SubTaskAction::Delete(id) => Message::SubTaskDelete(*id),
-        }
-    }
-}
-
 impl Content {
     pub fn new(storage: Store, config: config::AppConfig) -> Self {
         Self {
-            list: None,
+            selected_list: None,
             tasks: SlotMap::new(),
-            sub_tasks: SlotMap::new(),
-            task_editing: SecondaryMap::new(),
-            sub_task_editing: SecondaryMap::new(),
-            task_input_ids: SecondaryMap::new(),
-            sub_task_input_ids: SecondaryMap::new(),
-            input: String::new(),
+            editing: SecondaryMap::new(),
+            inputs: SecondaryMap::new(),
+            add_task_input: String::new(),
             config: config,
             store: storage,
             context_menu_open: false,
@@ -227,8 +194,10 @@ impl Content {
         let filtered_tasks: Vec<_> = tasks_vec
             .into_iter()
             .filter(|(_, task)| {
+                // Only show top-level tasks (no parent)
+                task.parent_id.is_none()
                 // Search filter
-                (!self.search_bar_visible || self.search_query.is_empty() || task.title.to_lowercase().contains(&self.search_query.to_lowercase()))
+                && (!self.search_bar_visible || self.search_query.is_empty() || task.title.to_lowercase().contains(&self.search_query.to_lowercase()))
                 // Hide completed filter
                 && (!(list.hide_completed || self.config.hide_completed) || task.status != Status::Completed)
             })
@@ -255,11 +224,12 @@ impl Content {
     pub fn task_view<'a>(&'a self, id: DefaultKey, task: &'a model::Task) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
 
-        let sub_tasks = self
-            .sub_tasks
-            .values()
-            .filter(|sub_task| task.sub_tasks.iter().any(|st| st.id == sub_task.id))
-            .collect::<Vec<_>>();
+        // Get direct children of this task
+        let sub_tasks: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|(_, sub_task)| sub_task.parent_id == Some(task.id))
+            .collect();
 
         let item_checkbox = widget::checkbox("", task.status == Status::Completed)
             .on_toggle(move |value| Message::TaskComplete(id, value));
@@ -300,7 +270,7 @@ impl Content {
         .item_width(widget::menu::ItemWidth::Uniform(260))
         .spacing(4.0);
 
-        let (completed, total) = sub_tasks.iter().fold((0, 0), |acc, subtask| {
+        let (completed, total) = sub_tasks.iter().fold((0, 0), |acc, (_, subtask)| {
             if subtask.status == Status::Completed {
                 (acc.0 + 1, acc.1 + 1)
             } else {
@@ -314,16 +284,18 @@ impl Content {
             None
         };
 
-        let is_editing = matches!(
-            self.task_editing.get(id),
-            Some(EditState::Entering) | Some(EditState::Editing)
-        );
-        let task_item_text = widget::editable_input("", &task.title, is_editing, move |editing| {
-            Message::TaskToggleTitleEditMode(id, editing)
-        })
+        let task_item_text = widget::editable_input(
+            "",
+            &task.title,
+            matches!(
+                self.editing.get(id),
+                Some(EditState::Entering) | Some(EditState::Editing)
+            ),
+            move |editing| Message::TaskToggleTitleEditMode(id, editing),
+        )
         .size(13)
         .trailing_icon(widget::column().into())
-        .id(self.task_input_ids[id].clone())
+        .id(self.inputs[id].clone())
         .on_submit(move |_| Message::TaskTitleSubmit(id))
         .on_input(move |text| Message::TaskTitleUpdate(id, text));
 
@@ -340,133 +312,18 @@ impl Content {
         let mut column = widget::column::with_capacity(2).push(row);
 
         if task.expanded && !sub_tasks.is_empty() {
-            let subtask_elements = self
-                .sub_tasks
+            let subtask_elements = sub_tasks
                 .iter()
-                .filter(|(_, sub_task)| task.sub_tasks.iter().any(|st| st.id == sub_task.id))
                 .map(|(sub_id, sub_task)| {
-                    widget::container(self.sub_task_view(sub_id, sub_task))
-                        .padding([0, 0, 0, spacing.space_l])
+                    widget::container(self.task_view(*sub_id, sub_task))
+                        .padding([0, 0, 0, spacing.space_xs])
                         .into()
                 })
                 .collect::<Vec<_>>();
             column = column.push(widget::column::with_children(subtask_elements));
         }
 
-        column
-            .padding(spacing.space_xxs)
-            .apply(widget::container)
-            .class(cosmic::style::Container::ContextDrawer)
-            .into()
-    }
-
-    pub fn sub_task_view<'a>(
-        &'a self,
-        id: DefaultKey,
-        task: &'a model::Task,
-    ) -> Element<'a, Message> {
-        let spacing = theme::active().cosmic().spacing;
-
-        let sub_tasks = self
-            .sub_tasks
-            .values()
-            .filter(|sub_task| task.sub_tasks.iter().any(|st| st.id == sub_task.id))
-            .collect::<Vec<_>>();
-
-        let item_checkbox = widget::checkbox("", task.status == Status::Completed)
-            .on_toggle(move |value| Message::SubTaskComplete(id, value));
-
-        let not_empty = !sub_tasks.is_empty();
-        let icon = if task.expanded {
-            "go-up-symbolic"
-        } else {
-            "go-down-symbolic"
-        };
-        let expand_button = not_empty.then(|| {
-            widget::button::icon(widget::icon::from_name(icon).size(18))
-                .padding(spacing.space_xxs)
-                .on_press(Message::SubTaskExpand(id))
-        });
-
-        let more_button = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
-            Element::from(
-                cosmic::widget::button::icon(
-                    widget::icon::from_name("view-more-symbolic").size(18),
-                )
-                .on_press(Message::Empty),
-            ),
-            widget::menu::items(
-                &HashMap::new(),
-                vec![
-                    widget::menu::Item::Button(fl!("edit"), None, SubTaskAction::Edit(id)),
-                    widget::menu::Item::Button(
-                        fl!("add-sub-task"),
-                        None,
-                        SubTaskAction::AddSubTask(id),
-                    ),
-                    widget::menu::Item::Button(fl!("delete"), None, SubTaskAction::Delete(id)),
-                ],
-            ),
-        )])
-        .item_height(widget::menu::ItemHeight::Dynamic(40))
-        .item_width(widget::menu::ItemWidth::Uniform(260))
-        .spacing(4.0);
-
-        let (completed, total) = sub_tasks.iter().fold((0, 0), |acc, subtask| {
-            if subtask.status == Status::Completed {
-                (acc.0 + 1, acc.1 + 1)
-            } else {
-                (acc.0, acc.1 + 1)
-            }
-        });
-
-        let subtask_count = if total > 0 {
-            Some(widget::text(format!("{}/{}", completed, total)))
-        } else {
-            None
-        };
-
-        let is_editing = matches!(
-            self.sub_task_editing.get(id),
-            Some(EditState::Entering) | Some(EditState::Editing)
-        );
-        let task_item_text = widget::editable_input("", &task.title, is_editing, move |editing| {
-            Message::SubTaskToggleTitleEditMode(id, editing)
-        })
-        .size(13)
-        .trailing_icon(widget::column().into())
-        .id(self.sub_task_input_ids[id].clone())
-        .on_submit(move |_| Message::SubTaskTitleSubmit(id))
-        .on_input(move |text| Message::SubTaskTitleUpdate(id, text));
-
-        let row = widget::row::with_capacity(4)
-            .align_y(Alignment::Center)
-            .spacing(spacing.space_xxxs)
-            .padding([spacing.space_xxs, spacing.space_s])
-            .push(item_checkbox)
-            .push(task_item_text)
-            .push_maybe(expand_button)
-            .push_maybe(subtask_count)
-            .push(more_button);
-
-        let mut column = widget::column::with_capacity(2).push(row);
-
-        if task.expanded && !sub_tasks.is_empty() {
-            let subtask_elements = self
-                .sub_tasks
-                .iter()
-                .filter(|(_, sub_task)| task.sub_tasks.iter().any(|st| st.id == sub_task.id))
-                .map(|(sub_id, sub_task)| {
-                    widget::container(self.sub_task_view(sub_id, sub_task))
-                        .padding([0, 0, 0, spacing.space_l])
-                        .into()
-                })
-                .collect::<Vec<_>>();
-            column = column.push(widget::column::with_children(subtask_elements));
-        }
-
-        column
-            .apply(widget::container)
+        widget::container(column)
             .class(cosmic::style::Container::ContextDrawer)
             .into()
     }
@@ -501,7 +358,7 @@ impl Content {
     pub fn new_task_view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
         row(vec![
-            widget::text_input(fl!("add-new-task"), &self.input)
+            widget::text_input(fl!("add-new-task"), &self.add_task_input)
                 .id(widget::Id::new("new-task-input"))
                 .on_input(Message::TaskTitleInput)
                 .on_submit(|_| Message::TaskAdd)
@@ -521,24 +378,9 @@ impl Content {
 
     fn populate_task_slotmap(&mut self, tasks: Vec<model::Task>) {
         for task in tasks {
-            let task_id = self.tasks.insert(task.clone());
-            self.task_input_ids.insert(task_id, widget::Id::unique());
-            self.task_editing.insert(task_id, EditState::Idle);
-            if !task.sub_tasks.is_empty() {
-                self.populate_sub_task_slotmap(task.sub_tasks);
-            }
-        }
-    }
-
-    fn populate_sub_task_slotmap(&mut self, tasks: Vec<model::Task>) {
-        for task in tasks {
-            let task_id = self.sub_tasks.insert(task.clone());
-            self.sub_task_input_ids
-                .insert(task_id, widget::Id::unique());
-            self.sub_task_editing.insert(task_id, EditState::Idle);
-            if !task.sub_tasks.is_empty() {
-                self.populate_sub_task_slotmap(task.sub_tasks);
-            }
+            let task_id = self.tasks.insert(task);
+            self.inputs.insert(task_id, widget::Id::unique());
+            self.editing.insert(task_id, EditState::Idle);
         }
     }
 
@@ -560,16 +402,13 @@ impl Content {
             }
             Message::SetTasks(tasks) => {
                 self.tasks.clear();
-                self.task_input_ids.clear();
-                self.task_editing.clear();
-                self.sub_tasks.clear();
-                self.sub_task_input_ids.clear();
-                self.sub_task_editing.clear();
-                self.input.clear();
+                self.inputs.clear();
+                self.editing.clear();
+                self.add_task_input.clear();
                 self.populate_task_slotmap(tasks);
             }
             Message::SetList(list) => {
-                match (&self.list, &list) {
+                match (&self.selected_list, &list) {
                     (Some(current), Some(list)) => {
                         if current.id != list.id {
                             match self.store.tasks(list.id).load_all() {
@@ -592,7 +431,7 @@ impl Content {
                     },
                     _ => {}
                 }
-                self.list.clone_from(&list);
+                self.selected_list.clone_from(&list);
             }
             Message::SetConfig(config) => {
                 self.config = config;
@@ -600,14 +439,6 @@ impl Content {
             Message::RefreshTask(refreshed_task) => {
                 if let Some((id, _)) = self.tasks.iter().find(|(_, t)| t.id == refreshed_task.id) {
                     if let Some(task) = self.tasks.get_mut(id) {
-                        *task = refreshed_task.clone();
-                    }
-                } else if let Some((id, _)) = self
-                    .sub_tasks
-                    .iter()
-                    .find(|(_, t)| t.id == refreshed_task.id)
-                {
-                    if let Some(task) = self.sub_tasks.get_mut(id) {
                         *task = refreshed_task.clone();
                     }
                 } else {
@@ -619,7 +450,7 @@ impl Content {
                 None => tracing::warn!("Task with ID {:?} not found", id),
             },
             Message::TaskExpand(default_key) => {
-                let Some(list) = &self.list else {
+                let Some(list) = &self.selected_list else {
                     tracing::warn!("No list selected");
                     return None;
                 };
@@ -635,14 +466,14 @@ impl Content {
                 }
             }
             Message::TaskAdd => {
-                if let Some(list) = &self.list {
-                    if !self.input.is_empty() {
-                        let task = model::Task::new(self.input.clone());
+                if let Some(list) = &self.selected_list {
+                    if !self.add_task_input.is_empty() {
+                        let task = model::Task::new(self.add_task_input.clone());
                         match self.store.tasks(list.id).save(&task) {
                             Ok(_) => {
                                 let id = self.tasks.insert(task);
-                                self.task_input_ids.insert(id, widget::Id::unique());
-                                self.input.clear();
+                                self.inputs.insert(id, widget::Id::unique());
+                                self.add_task_input.clear();
                             }
                             Err(error) => {
                                 tracing::error!("Failed to create task: {:?}", error);
@@ -652,18 +483,18 @@ impl Content {
                 }
             }
             Message::TaskToggleTitleEditMode(id, editing) => {
-                let Some(list) = &self.list else {
+                let Some(list) = &self.selected_list else {
                     tracing::warn!("No list selected");
                     return None;
                 };
 
-                let current_state = self.task_editing.get(id).copied().unwrap_or_default();
+                let current_state = self.editing.get(id).copied().unwrap_or_default();
 
                 // State machine to prevent feedback loops
                 let new_state = match (current_state, editing) {
                     // Request to enter edit mode from idle state
                     (EditState::Idle, true) => {
-                        output = Some(Output::Focus(self.task_input_ids[id].clone()));
+                        output = Some(Output::Focus(self.inputs[id].clone()));
                         Some(EditState::Entering)
                     }
                     // Confirmation that edit mode was entered (from widget after focus)
@@ -693,12 +524,12 @@ impl Content {
                 };
 
                 if let Some(state) = new_state {
-                    self.task_editing.insert(id, state);
+                    self.editing.insert(id, state);
                 }
             }
-            Message::TaskTitleInput(input) => self.input = input,
+            Message::TaskTitleInput(input) => self.add_task_input = input,
             Message::TaskTitleSubmit(id) => {
-                let Some(list) = &self.list else {
+                let Some(list) = &self.selected_list else {
                     tracing::warn!("No list selected");
                     return None;
                 };
@@ -710,7 +541,7 @@ impl Content {
                         .update(task.id, |t| *t = task.clone())
                     {
                         Ok(_) => {
-                            self.task_editing.insert(id, EditState::Idle);
+                            self.editing.insert(id, EditState::Idle);
                             output = Some(Output::Focus(widget::Id::new("new-task-input")));
                         }
                         Err(error) => tracing::error!("Failed to update task: {:?}", error),
@@ -723,7 +554,7 @@ impl Content {
                 }
             }
             Message::TaskDelete(id) => {
-                let Some(list) = &self.list else {
+                let Some(list) = &self.selected_list else {
                     tracing::warn!("No list selected");
                     return None;
                 };
@@ -735,7 +566,7 @@ impl Content {
                 }
             }
             Message::TaskComplete(id, complete) => {
-                let Some(list) = &self.list else {
+                let Some(list) = &self.selected_list else {
                     tracing::warn!("No list selected");
                     return None;
                 };
@@ -757,17 +588,20 @@ impl Content {
                 }
             }
             Message::TaskAddSubTask(id) => {
-                let Some(list) = &self.list else {
+                let Some(list) = &self.selected_list else {
                     tracing::warn!("No list selected");
                     return None;
                 };
 
                 if let Some(task) = self.tasks.get_mut(id) {
                     task.expanded = true;
-                    let sub_task = model::Task::new("".to_string());
+                    let mut sub_task = model::Task::new("".to_string());
+                    sub_task.parent_id = Some(task.id);
+
                     match self.store.tasks(list.id).save(&sub_task) {
                         Ok(_) => {
-                            task.sub_tasks.push(sub_task.clone());
+                            // Add sub_task ID to parent's sub_task_ids
+                            task.sub_task_ids.push(sub_task.id);
                             if let Err(error) = self
                                 .store
                                 .tasks(list.id)
@@ -776,13 +610,11 @@ impl Content {
                                 tracing::error!("Failed to update task with sub-task: {:?}", error);
                             }
 
-                            let sub_task_id = self.sub_tasks.insert(sub_task);
-                            self.sub_task_input_ids
-                                .insert(sub_task_id, widget::Id::unique());
-                            self.sub_task_editing
-                                .insert(sub_task_id, EditState::Entering);
-                            output =
-                                Some(Output::Focus(self.sub_task_input_ids[sub_task_id].clone()));
+                            // Insert subtask into the same tasks slotmap
+                            let sub_task_id = self.tasks.insert(sub_task);
+                            self.inputs.insert(sub_task_id, widget::Id::unique());
+                            self.editing.insert(sub_task_id, EditState::Entering);
+                            output = Some(Output::Focus(self.inputs[sub_task_id].clone()));
                         }
                         Err(error) => {
                             tracing::error!("Failed to add sub-task: {:?}", error);
@@ -791,7 +623,7 @@ impl Content {
                 }
             }
             Message::ToggleHideCompleted => {
-                if let Some(ref mut list) = self.list {
+                if let Some(ref mut list) = self.selected_list {
                     match self.store.lists().update(list.id, |list| {
                         list.hide_completed = !list.hide_completed;
                     }) {
@@ -805,183 +637,6 @@ impl Content {
                     }
                 }
             }
-            Message::SubTaskToggleTitleEditMode(id, editing) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                let current_state = self.sub_task_editing.get(id).copied().unwrap_or_default();
-
-                // State machine to prevent feedback loops
-                let new_state = match (current_state, editing) {
-                    // Request to enter edit mode from idle state
-                    (EditState::Idle, true) => {
-                        output = Some(Output::Focus(self.sub_task_input_ids[id].clone()));
-                        Some(EditState::Entering)
-                    }
-                    // Confirmation that edit mode was entered (from widget after focus)
-                    (EditState::Entering, true) => Some(EditState::Editing),
-                    // Request to exit edit mode
-                    (EditState::Editing, false) => {
-                        if let Some(task) = self.sub_tasks.get(id) {
-                            if let Err(error) = self
-                                .store
-                                .tasks(list.id)
-                                .update(task.id, |t| *t = task.clone())
-                            {
-                                tracing::error!("Failed to update sub-task: {:?}", error);
-                            }
-                        }
-                        Some(EditState::Exiting)
-                    }
-                    // Confirmation that edit mode was exited (from widget after blur)
-                    (EditState::Exiting, false) => Some(EditState::Idle),
-                    // Ignore redundant state changes that would cause loops
-                    (EditState::Entering, false) | (EditState::Exiting, true) => {
-                        tracing::debug!(
-                            "Ignoring redundant edit state change for sub-task {:?}",
-                            id
-                        );
-                        None
-                    }
-                    // Already in requested state, ignore
-                    (EditState::Idle, false) | (EditState::Editing, true) => None,
-                };
-
-                if let Some(state) = new_state {
-                    self.sub_task_editing.insert(id, state);
-                }
-            }
-            Message::SubTaskTitleSubmit(id) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                if let Some(task) = self.sub_tasks.get(id) {
-                    match self
-                        .store
-                        .tasks(list.id)
-                        .update(task.id, |t| *t = task.clone())
-                    {
-                        Ok(_) => {
-                            self.sub_task_editing.insert(id, EditState::Idle);
-                            output = Some(Output::Focus(widget::Id::new("new-task-input")));
-                        }
-                        Err(error) => tracing::error!("Failed to update sub-task: {:?}", error),
-                    }
-                }
-            }
-            Message::SubTaskTitleUpdate(id, title) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                if let Some(task) = self.sub_tasks.get_mut(id) {
-                    task.title = title;
-                    if let Err(error) = self
-                        .store
-                        .tasks(list.id)
-                        .update(task.id, |t| *t = task.clone())
-                    {
-                        tracing::error!("Failed to update sub-task: {:?}", error);
-                    }
-                }
-            }
-            Message::SubTaskOpenDetails(id) => {
-                if let Some(task) = self.sub_tasks.get(id) {
-                    output = Some(Output::OpenTaskDetails(task.clone()));
-                } else {
-                    tracing::warn!("Sub-task with ID {:?} not found", id);
-                }
-            }
-            Message::SubTaskAddSubTask(id) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                if let Some(task) = self.sub_tasks.get_mut(id) {
-                    task.expanded = true;
-                    let sub_task = model::Task::new("".to_string());
-                    match self.store.tasks(list.id).save(&sub_task) {
-                        Ok(_) => {
-                            task.sub_tasks.push(sub_task.clone());
-                            if let Err(error) = self
-                                .store
-                                .tasks(list.id)
-                                .update(task.id, |t| *t = task.clone())
-                            {
-                                tracing::error!("Failed to update task with sub-task: {:?}", error);
-                            }
-
-                            let sub_task_id = self.sub_tasks.insert(sub_task);
-                            self.sub_task_input_ids
-                                .insert(sub_task_id, widget::Id::unique());
-                            self.sub_task_editing
-                                .insert(sub_task_id, EditState::Entering);
-                            output =
-                                Some(Output::Focus(self.sub_task_input_ids[sub_task_id].clone()));
-                        }
-                        Err(error) => {
-                            tracing::error!("Failed to add sub-task: {:?}", error);
-                        }
-                    }
-                }
-            }
-            Message::SubTaskComplete(id, complete) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                let task = self.sub_tasks.get_mut(id);
-                if let Some(task) = task {
-                    task.status = if complete {
-                        Status::Completed
-                    } else {
-                        Status::NotStarted
-                    };
-                    if let Err(error) = self
-                        .store
-                        .tasks(list.id)
-                        .update(task.id, |t| *t = task.clone())
-                    {
-                        tracing::error!("Failed to update sub-task: {:?}", error);
-                    }
-                }
-            }
-            Message::SubTaskDelete(id) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                if let Some(task) = self.sub_tasks.remove(id) {
-                    if let Err(error) = self.store.tasks(list.id).delete(task.id) {
-                        tracing::error!("Failed to delete sub-task: {:?}", error);
-                    }
-                }
-            }
-            Message::SubTaskExpand(id) => {
-                let Some(list) = &self.list else {
-                    tracing::warn!("No list selected");
-                    return None;
-                };
-
-                if let Some(task) = self.sub_tasks.get_mut(id) {
-                    task.expanded = !task.expanded;
-                    if let Err(error) = self
-                        .store
-                        .tasks(list.id)
-                        .update(task.id, |t| *t = task.clone())
-                    {
-                        tracing::error!("Failed to update sub-task: {:?}", error);
-                    }
-                }
-            }
             Message::SetSort(sort_type) => {
                 self.sort_type = sort_type;
             }
@@ -992,7 +647,7 @@ impl Content {
     pub fn view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
 
-        let Some(ref list) = self.list else {
+        let Some(ref list) = self.selected_list else {
             return widget::container(
                 widget::column::with_children(vec![
                     widget::icon::from_name("applications-office-symbolic")

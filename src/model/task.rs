@@ -25,8 +25,10 @@ pub struct Task {
     pub recurrence: Recurrence,
     /// The tags associated with the task.
     pub tags: Vec<String>,
-    /// The subtasks of the task.
-    pub sub_tasks: Vec<Task>,
+    /// The parent task ID (None if this is a top-level task).
+    pub parent_id: Option<Uuid>,
+    /// The IDs of direct child tasks.
+    pub sub_task_ids: Vec<Uuid>,
     /// The date and time when the task was completed, if applicable.
     pub completion_date: Option<DateTime<Utc>>,
     /// The date and time when the task is due, if applicable.
@@ -50,7 +52,8 @@ impl Default for Task {
             priority: Priority::Normal,
             recurrence: Recurrence::default(),
             tags: Vec::new(),
-            sub_tasks: Vec::new(),
+            parent_id: None,
+            sub_task_ids: Vec::new(),
             completion_date: None,
             due_date: None,
             reminder_date: None,
@@ -73,7 +76,8 @@ impl Task {
             priority: Priority::Normal,
             recurrence: Recurrence::default(),
             tags: Vec::new(),
-            sub_tasks: Vec::new(),
+            parent_id: None,
+            sub_task_ids: Vec::new(),
             completion_date: None,
             due_date: None,
             reminder_date: None,
