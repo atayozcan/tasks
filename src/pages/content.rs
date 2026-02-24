@@ -484,7 +484,7 @@ impl Content {
     ) -> Element<'a, Message> {
         let is_active = list.hide_completed || self.config.hide_completed;
         let mut button =
-            widget::button::icon(widget::icon::from_name("check-round-outline-symbolic").size(18))
+            widget::button::icon(widget::icon::from_name("checkbox-checked-symbolic").size(18))
                 .selected(is_active)
                 .padding(spacing.space_xxs);
 

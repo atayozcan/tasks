@@ -216,7 +216,11 @@ impl Application for AppModel {
                 ),
                 cosmic::widget::menu::Item::Button(
                     fl!("export"),
-                    Some(widget::icon::from_name("share-symbolic").size(18).handle()),
+                    Some(
+                        widget::icon::from_name("emblem-shared-symbolic")
+                            .size(18)
+                            .handle(),
+                    ),
                     NavMenuAction::Export(id),
                 ),
                 cosmic::widget::menu::Item::Button(

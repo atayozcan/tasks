@@ -3,7 +3,11 @@
 use std::collections::HashMap;
 
 use cosmic::{
-    Element, widget::{self, menu::{Item, ItemHeight, ItemWidth, MenuBar, Tree, items, key_bind::KeyBind, root}}
+    widget::{
+        self,
+        menu::{items, key_bind::KeyBind, root, Item, ItemHeight, ItemWidth, MenuBar, Tree},
+    },
+    Element,
 };
 
 use crate::{
@@ -25,19 +29,31 @@ pub fn menu_bar<'a>(
                 vec![
                     Item::Button(
                         fl!("new-window"),
-                        Some(widget::icon::from_name("tabs-stack-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("new-window-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::WindowNew,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("new-list"),
-                        Some(widget::icon::from_name("plus-square-filled-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("list-add-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::NewList,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("quit"),
-                        Some(widget::icon::from_name("cross-small-square-filled-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("application-exit-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::WindowClose,
                     ),
                 ],
@@ -56,13 +72,21 @@ pub fn menu_bar<'a>(
                     Item::Divider,
                     Item::Button(
                         fl!("icon"),
-                        Some(widget::icon::from_name("face-smile-big-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("face-smile-big-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::Icon,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("delete"),
-                        Some(widget::icon::from_name("user-trash-full-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("user-trash-full-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::DeleteList,
                     ),
                 ],
@@ -75,7 +99,11 @@ pub fn menu_bar<'a>(
                 vec![
                     Item::Button(
                         fl!("menu-settings"),
-                        Some(widget::icon::from_name("settings-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("preferences-system-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::Settings,
                     ),
                     Item::Divider,
@@ -88,7 +116,11 @@ pub fn menu_bar<'a>(
                     Item::Divider,
                     Item::Button(
                         fl!("menu-about"),
-                        Some(widget::icon::from_name("info-outline-symbolic").size(14).handle()),
+                        Some(
+                            widget::icon::from_name("dialog-information-symbolic")
+                                .size(14)
+                                .handle(),
+                        ),
                         MenuAction::About,
                     ),
                 ],

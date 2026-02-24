@@ -47,17 +47,17 @@ impl Details {
         let priority_model = segmented_button::ModelBuilder::default()
             .insert(|entity| {
                 entity
-                    .icon(widget::icon::from_name("flag-outline-thin-symbolic").size(14))
+                    .icon(widget::icon::from_name("security-low-symbolic").size(14))
                     .data(Priority::Low)
             })
             .insert(|entity| {
                 entity
-                    .icon(widget::icon::from_name("flag-outline-thick-symbolic").size(14))
+                    .icon(widget::icon::from_name("security-medium-symbolic").size(14))
                     .data(Priority::Normal)
             })
             .insert(|entity| {
                 entity
-                    .icon(widget::icon::from_name("flag-filled-symbolic").size(14))
+                    .icon(widget::icon::from_name("security-high-symbolic").size(14))
                     .data(Priority::High)
             })
             .build();
