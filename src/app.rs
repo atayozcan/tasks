@@ -7,7 +7,6 @@ pub mod menu;
 
 pub use flags::*;
 use std::{
-    any::TypeId,
     collections::{HashMap, VecDeque},
     env, process,
 };
@@ -15,8 +14,7 @@ use std::{
 use cli_clipboard::{ClipboardContext, ClipboardProvider};
 use cosmic::{
     app::{self, Core},
-    cosmic_config::{self, Update},
-    cosmic_theme::{self, ThemeMode},
+    cosmic_config,
     iced::{
         keyboard::{Event as KeyEvent, Modifiers},
         Event, Subscription,
@@ -40,7 +38,7 @@ use crate::{
         markdown::Markdown,
     },
     core::{
-        config::{self, CONFIG_VERSION},
+        config::{self, AppConfig},
         key_bind::key_binds,
     },
     fl,
@@ -97,6 +95,7 @@ pub enum Message {
     ToggleContextDrawer,
     ToggleContextPage(ContextPage),
     Open(String),
+    UpdateConfig(AppConfig),
 }
 
 impl Application for AppModel {
@@ -268,10 +267,16 @@ impl Application for AppModel {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        struct ConfigSubscription;
-        struct ThemeSubscription;
+        let subscriptions = vec![
+            self.core()
+                .watch_config::<AppConfig>(Self::APP_ID)
+                .map(|update| {
+                    for why in update.errors {
+                        tracing::error!(?why, "app config error");
+                    }
 
-        let mut subscriptions = vec![
+                    Message::UpdateConfig(update.config)
+                }),
             cosmic::iced::event::listen_with(|event, _status, _window_id| match event {
                 Event::Keyboard(KeyEvent::KeyPressed { key, modifiers, .. }) => {
                     Some(Message::Application(ApplicationAction::Key(modifiers, key)))
@@ -281,45 +286,19 @@ impl Application for AppModel {
                 ),
                 _ => None,
             }),
-            cosmic_config::config_subscription(
-                TypeId::of::<ConfigSubscription>(),
-                Self::APP_ID.into(),
-                CONFIG_VERSION,
-            )
-            .map(|update: Update<ThemeMode>| {
-                if !update.errors.is_empty() {
-                    tracing::info!(
-                        "errors loading config {:?}: {:?}",
-                        update.keys,
-                        update.errors
-                    );
-                }
-                Message::Application(ApplicationAction::SystemThemeModeChange)
-            }),
-            cosmic_config::config_subscription::<_, cosmic_theme::ThemeMode>(
-                TypeId::of::<ThemeSubscription>(),
-                cosmic_theme::THEME_MODE_ID.into(),
-                cosmic_theme::ThemeMode::version(),
-            )
-            .map(|update: Update<ThemeMode>| {
-                if !update.errors.is_empty() {
-                    tracing::info!(
-                        "errors loading theme mode {:?}: {:?}",
-                        update.keys,
-                        update.errors
-                    );
-                }
-                Message::Application(ApplicationAction::SystemThemeModeChange)
-            }),
         ];
-
-        subscriptions.push(self.content.subscription().map(Message::Content));
 
         Subscription::batch(subscriptions)
     }
 
     fn update(&mut self, message: Self::Message) -> app::Task<Self::Message> {
         match message {
+            Message::UpdateConfig(config) => {
+                self.config = config;
+                return cosmic::task::message(Message::Content(content::Message::SetConfig(
+                    self.config.clone(),
+                )));
+            }
             Message::Open(url) => {
                 if let Err(err) = open::that_detached(url) {
                     tracing::error!("{err}")
@@ -414,8 +393,6 @@ impl Application for AppModel {
                     if let Err(err) = self.config.set_app_theme(&self.handler, theme.into()) {
                         tracing::error!("{err}")
                     }
-                }
-                ApplicationAction::SystemThemeModeChange => {
                     return cosmic::command::set_theme(self.config.app_theme.theme());
                 }
                 ApplicationAction::Key(modifiers, key) => {

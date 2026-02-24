@@ -30,7 +30,6 @@ pub enum ApplicationAction {
     Modifiers(Modifiers),
     AppTheme(usize),
     Focus(widget::Id),
-    SystemThemeModeChange,
 }
 
 #[derive(Debug, Clone)]

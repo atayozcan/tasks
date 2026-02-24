@@ -4,7 +4,7 @@ use cosmic::{
     cosmic_theme::Spacing,
     iced::{
         alignment::{Horizontal, Vertical},
-        Alignment, Length, Subscription,
+        Alignment, Length,
     },
     iced_widget::row,
     theme,
@@ -374,12 +374,12 @@ impl Content {
                 }
             }
             Message::ToggleHideCompleted => {
-                if let Some(ref mut list) = self.selected_list {
-                    match self.store.lists().update(list.id, |list| {
-                        list.hide_completed = !list.hide_completed;
+                if let Some(ref mut selected_list) = self.selected_list {
+                    match self.store.lists().update(selected_list.id, |list| {
+                        list.hide_completed = !selected_list.hide_completed;
                     }) {
                         Ok(updated) => {
-                            list.hide_completed = !updated.hide_completed;
+                            selected_list.hide_completed = updated.hide_completed;
                             output = Some(Output::ToggleHideCompleted(updated.clone()));
                         }
                         Err(err) => {
@@ -393,10 +393,6 @@ impl Content {
             }
         }
         output
-    }
-
-    pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
     }
 }
 
@@ -437,15 +433,17 @@ impl Content {
 
         let items = widget::column::with_children(filtered_tasks).spacing(spacing.space_s);
 
-        column
-            .push(items)
-            .padding([spacing.space_none, spacing.space_l])
-            .spacing(spacing.space_s)
-            .apply(widget::container)
-            .height(Length::Shrink)
-            .apply(widget::scrollable)
-            .height(Length::Fill)
-            .into()
+        widget::scrollable(
+            widget::container(
+                column
+                    .push(items)
+                    .padding([spacing.space_none, spacing.space_l])
+                    .spacing(spacing.space_s),
+            )
+            .height(Length::Shrink),
+        )
+        .height(Length::Fill)
+        .into()
     }
 
     /// Creates the header row for a list with title and action buttons
@@ -492,7 +490,11 @@ impl Content {
             button = button.class(cosmic::style::Button::Suggested);
         }
 
-        button.on_press(Message::ToggleHideCompleted).into()
+        if !self.config.hide_completed {
+            button = button.on_press(Message::ToggleHideCompleted);
+        }
+
+        button.into()
     }
 
     /// Creates the search toggle button
@@ -513,24 +515,20 @@ impl Content {
 
     /// Sorts tasks according to the current sort type
     fn sort_tasks(&self) -> Vec<(DefaultKey, &model::Task)> {
-        let mut tasks_vec: Vec<_> = self.tasks.iter().collect();
+        let mut tasks: Vec<_> = self.tasks.iter().collect();
 
         match self.sort_type {
             SortType::NameAsc => {
-                tasks_vec.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()))
+                tasks.sort_by(|a, b| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()))
             }
             SortType::NameDesc => {
-                tasks_vec.sort_by(|a, b| b.1.title.to_lowercase().cmp(&a.1.title.to_lowercase()))
+                tasks.sort_by(|a, b| b.1.title.to_lowercase().cmp(&a.1.title.to_lowercase()))
             }
-            SortType::DateAsc => {
-                tasks_vec.sort_by(|a, b| a.1.creation_date.cmp(&b.1.creation_date))
-            }
-            SortType::DateDesc => {
-                tasks_vec.sort_by(|a, b| b.1.creation_date.cmp(&a.1.creation_date))
-            }
+            SortType::DateAsc => tasks.sort_by(|a, b| a.1.creation_date.cmp(&b.1.creation_date)),
+            SortType::DateDesc => tasks.sort_by(|a, b| b.1.creation_date.cmp(&a.1.creation_date)),
         }
 
-        tasks_vec
+        tasks
     }
 
     /// Filters tasks and renders them as UI elements
@@ -570,7 +568,7 @@ impl Content {
     pub fn task_view<'a>(&'a self, id: DefaultKey, task: &'a model::Task) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
 
-        let sub_tasks = self.get_subtasks(task);
+        let sub_tasks = self.get_subtasks(task, self.selected_list.as_ref());
         let task_row = self.create_task_row(id, task, &sub_tasks, &spacing);
 
         let mut column = widget::column::with_capacity(2).push(task_row);
@@ -585,10 +583,23 @@ impl Content {
     }
 
     /// Gets all direct subtasks of a task
-    fn get_subtasks(&self, task: &model::Task) -> Vec<(DefaultKey, &model::Task)> {
+    fn get_subtasks(
+        &self,
+        task: &model::Task,
+        list: Option<&List>,
+    ) -> Vec<(DefaultKey, &model::Task)> {
+        let should_hide_completed = list
+            .map(|l| l.hide_completed || self.config.hide_completed)
+            .unwrap_or(false);
+
         self.tasks
             .iter()
-            .filter(|(_, sub_task)| sub_task.parent_id == Some(task.id))
+            .filter(|(_, sub_task)| {
+                let is_child = sub_task.parent_id == Some(task.id);
+                let show_despite_completion =
+                    !should_hide_completed || sub_task.status != Status::Completed;
+                is_child && show_despite_completion
+            })
             .collect()
     }
 
