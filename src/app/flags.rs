@@ -1,9 +1,9 @@
-use crate::{core::config::TasksConfig, services::store::Store};
+use crate::{core::config::AppConfig, services::store::Store};
 use cosmic::cosmic_config::Config;
 
 #[derive(Clone, Debug)]
 pub struct Flags {
     pub handler: Config,
-    pub config: TasksConfig,
+    pub config: AppConfig,
     pub store: Store,
 }

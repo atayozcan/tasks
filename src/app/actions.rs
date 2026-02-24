@@ -1,18 +1,14 @@
 use crate::{
-    app::{
-        context::ContextPage,
-        dialog::{DialogAction, DialogPage},
-        Message,
-    },
+    app::{context::ContextPage, Message},
     model::List,
 };
 use cosmic::{
     iced::keyboard::{Key, Modifiers},
-    widget::{self, menu::Action as MenuAction, segmented_button},
+    widget::{self, menu::Action, segmented_button},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Action {
+pub enum MenuAction {
     About,
     Settings,
     WindowClose,
@@ -30,22 +26,11 @@ pub enum Action {
 
 #[derive(Debug, Clone)]
 pub enum ApplicationAction {
-    WindowClose,
-    WindowNew,
     Key(Modifiers, Key),
     Modifiers(Modifiers),
     AppTheme(usize),
-    SystemThemeModeChange,
     Focus(widget::Id),
-    NavMenuAction(NavMenuAction),
-    Dialog(DialogAction),
-    ToggleContextDrawer,
-    ToggleContextPage(ContextPage),
-    ToggleHideCompleted(bool),
-    SortByNameAsc,
-    SortByNameDesc,
-    SortByDateAsc,
-    SortByDateDesc,
+    SystemThemeModeChange,
 }
 
 #[derive(Debug, Clone)]
@@ -56,37 +41,13 @@ pub enum TasksAction {
     FetchLists,
 }
 
-impl MenuAction for Action {
+impl Action for MenuAction {
     type Message = Message;
     fn message(&self) -> Self::Message {
         match self {
-            Action::About => {
-                Message::Application(ApplicationAction::ToggleContextPage(ContextPage::About))
-            }
-            Action::Settings => {
-                Message::Application(ApplicationAction::ToggleContextPage(ContextPage::Settings))
-            }
-            Action::WindowClose => Message::Application(ApplicationAction::WindowClose),
-            Action::WindowNew => Message::Application(ApplicationAction::WindowNew),
-            Action::NewList => Message::Application(ApplicationAction::Dialog(DialogAction::Open(
-                DialogPage::New(String::new()),
-            ))),
-            Action::Icon => Message::Application(ApplicationAction::Dialog(DialogAction::Open(
-                DialogPage::Icon(None, String::new(), String::new()),
-            ))),
-            Action::RenameList => Message::Application(ApplicationAction::Dialog(
-                DialogAction::Open(DialogPage::Rename(None, String::new())),
-            )),
-            Action::DeleteList => Message::Application(ApplicationAction::Dialog(
-                DialogAction::Open(DialogPage::Delete(None)),
-            )),
-            Action::ToggleHideCompleted(value) => {
-                Message::Application(ApplicationAction::ToggleHideCompleted(*value))
-            }
-            Action::SortByNameAsc => Message::Application(ApplicationAction::SortByNameAsc),
-            Action::SortByNameDesc => Message::Application(ApplicationAction::SortByNameDesc),
-            Action::SortByDateAsc => Message::Application(ApplicationAction::SortByDateAsc),
-            Action::SortByDateDesc => Message::Application(ApplicationAction::SortByDateDesc),
+            MenuAction::About => Message::ToggleContextPage(ContextPage::About),
+            MenuAction::Settings => Message::ToggleContextPage(ContextPage::Settings),
+            action => Message::Menu(*action),
         }
     }
 }
@@ -99,12 +60,10 @@ pub enum NavMenuAction {
     Delete(segmented_button::Entity),
 }
 
-impl MenuAction for NavMenuAction {
+impl Action for NavMenuAction {
     type Message = cosmic::Action<Message>;
 
     fn message(&self) -> Self::Message {
-        cosmic::Action::App(Message::Application(ApplicationAction::NavMenuAction(
-            *self,
-        )))
+        cosmic::Action::App(Message::NavMenu(*self))
     }
 }

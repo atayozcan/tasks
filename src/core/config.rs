@@ -1,35 +1,15 @@
 use cosmic::{
-    cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, Config, CosmicConfigEntry},
-    theme, Application,
+    cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry},
+    theme,
 };
 use serde::{Deserialize, Serialize};
-
-use crate::app::Tasks;
 
 pub const CONFIG_VERSION: u64 = 1;
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Deserialize, Serialize, CosmicConfigEntry)]
-pub struct TasksConfig {
+pub struct AppConfig {
     pub app_theme: AppTheme,
     pub hide_completed: bool,
-}
-
-impl TasksConfig {
-    pub fn config_handler() -> Option<Config> {
-        Config::new(Tasks::APP_ID, CONFIG_VERSION).ok()
-    }
-
-    pub fn config() -> TasksConfig {
-        match Self::config_handler() {
-            Some(config_handler) => {
-                TasksConfig::get_entry(&config_handler).unwrap_or_else(|(errs, config)| {
-                    tracing::info!("errors loading config: {:?}", errs);
-                    config
-                })
-            }
-            None => TasksConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

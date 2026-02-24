@@ -18,8 +18,8 @@ use directories::ProjectDirs;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    app::{Flags, Tasks},
-    core::config::{TasksConfig, CONFIG_VERSION},
+    app::{Flags, AppModel},
+    core::config::{AppConfig, CONFIG_VERSION},
     services::store::Store,
 };
 
@@ -47,10 +47,10 @@ pub fn main() -> Result<()> {
     let store = Store::open(project.data_dir())?;
 
     // Config handler for managing the app's configuration.
-    let handler = Config::new(Tasks::APP_ID, CONFIG_VERSION)?;
+    let handler = Config::new(AppModel::APP_ID, CONFIG_VERSION)?;
 
     // Load the app's configuration, falling back to defaults if there are errors.
-    let config = TasksConfig::get_entry(&handler).unwrap_or_else(|(errs, config)| {
+    let config = AppConfig::get_entry(&handler).unwrap_or_else(|(errs, config)| {
         tracing::info!("errors loading config: {:?}", errs);
         config
     });
@@ -72,5 +72,5 @@ pub fn main() -> Result<()> {
     };
 
     // Run the application.
-    cosmic::app::run::<app::Tasks>(settings, flags).map_err(Error::Iced)
+    cosmic::app::run::<app::AppModel>(settings, flags).map_err(Error::Iced)
 }

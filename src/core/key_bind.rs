@@ -6,9 +6,9 @@ use cosmic::{
     widget::menu::key_bind::{KeyBind, Modifier},
 };
 
-use crate::app::actions::Action;
+use crate::app::actions::MenuAction;
 
-pub fn key_binds() -> HashMap<KeyBind, Action> {
+pub fn key_binds() -> HashMap<KeyBind, MenuAction> {
     let mut key_binds = HashMap::new();
 
     macro_rules! bind {
@@ -18,7 +18,7 @@ pub fn key_binds() -> HashMap<KeyBind, Action> {
                     modifiers: vec![$(Modifier::$modifier),*],
                     key: $key,
                 },
-                Action::$action,
+                MenuAction::$action,
             );
         }};
     }

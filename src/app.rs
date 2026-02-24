@@ -23,8 +23,10 @@ use cosmic::{
     },
     widget::{
         self,
+        about::About,
         calendar::CalendarModel,
         menu::{key_bind::KeyBind, Action as _},
+        nav_bar,
         segmented_button::{Entity, EntityMut, SingleSelect},
     },
     Application, ApplicationExt, Element,
@@ -32,9 +34,10 @@ use cosmic::{
 
 use crate::{
     app::{
-        actions::{Action, ApplicationAction, NavMenuAction, TasksAction},
+        actions::{ApplicationAction, MenuAction, NavMenuAction, TasksAction},
         context::ContextPage,
-        dialog::{DialogAction, DialogPage}, markdown::Markdown,
+        dialog::{DialogAction, DialogPage},
+        markdown::Markdown,
     },
     core::{
         config::{self, CONFIG_VERSION},
@@ -49,21 +52,37 @@ use crate::{
     services::store::Store,
 };
 
-pub struct Tasks {
+/// The application model stores app-specific state used to describe its interface and
+/// drive its logic.
+pub struct AppModel {
+    /// Application state which is managed by the COSMIC runtime.
     core: Core,
-    about: widget::about::About,
-    nav_model: widget::segmented_button::SingleSelectModel,
-    store: Store,
-    content: Content,
-    details: Details,
-    handler: cosmic_config::Config,
-    config: config::TasksConfig,
-    app_themes: Vec<String>,
+    /// Display a context drawer with the designated page if defined.
     context_page: ContextPage,
-    key_binds: HashMap<KeyBind, Action>,
+    /// The about page for this app.
+    about: About,
+    /// Contains items assigned to the nav bar panel.
+    nav: nav_bar::Model,
+    /// Key bindings for the application's menu bar.
+    key_binds: HashMap<KeyBind, MenuAction>,
+    /// Configuration handler for managing app settings.
+    handler: cosmic_config::Config,
+    /// Application-specific configuration.
+    config: config::AppConfig,
+
+    /// Current keyboard modifiers.
     modifiers: Modifiers,
+    /// Queue of dialog pages.
     dialog_pages: VecDeque<DialogPage>,
+    /// Identifier for the dialog text input widget.
     dialog_text_input: widget::Id,
+
+    /// Persistent storage for lists and tasks.
+    store: Store,
+    /// The main content area of the application.
+    content: Content,
+    /// The details view for tasks.
+    details: Details,
 }
 
 #[derive(Debug, Clone)]
@@ -71,411 +90,16 @@ pub enum Message {
     Content(content::Message),
     Details(details::Message),
     Tasks(TasksAction),
+    Menu(MenuAction),
+    Dialog(DialogAction),
+    NavMenu(NavMenuAction),
     Application(ApplicationAction),
+    ToggleContextDrawer,
+    ToggleContextPage(ContextPage),
     Open(String),
 }
 
-impl Tasks {
-    fn settings(&self) -> Element<'_, Message> {
-        widget::scrollable(widget::settings::section().title(fl!("appearance")).add(
-            widget::settings::item::item(
-                fl!("theme"),
-                widget::dropdown(
-                    &self.app_themes,
-                    Some(self.config.app_theme.into()),
-                    |theme| Message::Application(ApplicationAction::AppTheme(theme)),
-                ),
-            ),
-        ))
-        .into()
-    }
-
-    fn create_nav_item(&mut self, list: &List) -> EntityMut<'_, SingleSelect> {
-        let icon =
-            widget::icon::from_name(list.icon.as_deref().unwrap_or("view-list-symbolic")).size(16);
-        self.nav_model
-            .insert()
-            .text(list.name.clone())
-            .icon(icon)
-            .data(list.clone())
-    }
-
-    fn update_content(
-        &mut self,
-        tasks: &mut Vec<cosmic::Task<cosmic::Action<Message>>>,
-        message: content::Message,
-    ) {
-        let content_tasks = self.content.update(message);
-        for content_task in content_tasks {
-            match content_task {
-                content::Output::Focus(id) => {
-                    tasks.push(self.update(Message::Application(ApplicationAction::Focus(id))))
-                }
-                content::Output::OpenTaskDetails(task) => {
-                    let entity = self.details.priority_model.entity_at(task.priority as u16);
-                    if let Some(entity) = entity {
-                        self.details.priority_model.activate(entity);
-                    }
-                    self.details.task = task.clone();
-                    self.details.text_editor_content =
-                        widget::text_editor::Content::with_text(&task.notes);
-
-                    tasks.push(self.update(Message::Application(
-                        ApplicationAction::ToggleContextPage(ContextPage::TaskDetails),
-                    )));
-                }
-                content::Output::ToggleHideCompleted(list) => {
-                    match self.store.lists().update(list.id, |list| {
-                        list.hide_completed = !list.hide_completed;
-                    }) {
-                        Ok(list) => {
-                            if let Some(data) = self.nav_model.active_data_mut::<List>() {
-                                data.hide_completed = list.hide_completed;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("Error updating list: {err}");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn update_details(
-        &mut self,
-        tasks: &mut Vec<cosmic::Task<cosmic::Action<Message>>>,
-        message: details::Message,
-    ) {
-        let details_tasks = self.details.update(message);
-        for details_task in details_tasks {
-            match details_task {
-                details::Output::OpenCalendarDialog => {
-                    tasks.push(self.update(Message::Application(ApplicationAction::Dialog(
-                        DialogAction::Open(DialogPage::Calendar(CalendarModel::now())),
-                    ))));
-                }
-                details::Output::RefreshTask(task) => {
-                    tasks.push(self.update(Message::Content(content::Message::RefreshTask(
-                        task.clone(),
-                    ))));
-                }
-            }
-        }
-    }
-
-    fn update_dialog(
-        &mut self,
-        tasks: &mut Vec<cosmic::Task<cosmic::Action<Message>>>,
-        dialog_action: DialogAction,
-    ) {
-        match dialog_action {
-            DialogAction::Open(page) => {
-                match page {
-                    DialogPage::Rename(entity, _) => {
-                        let data = if let Some(entity) = entity {
-                            self.nav_model.data::<List>(entity)
-                        } else {
-                            self.nav_model.active_data::<List>()
-                        };
-                        if let Some(list) = data {
-                            self.dialog_pages
-                                .push_back(DialogPage::Rename(entity, list.name.clone()));
-                        }
-                    }
-                    page => self.dialog_pages.push_back(page),
-                }
-                tasks.push(self.update(Message::Application(ApplicationAction::Focus(
-                    self.dialog_text_input.clone(),
-                ))));
-            }
-            DialogAction::Update(dialog_page) => {
-                self.dialog_pages[0] = dialog_page;
-            }
-            DialogAction::Close => {
-                self.dialog_pages.pop_front();
-            }
-            DialogAction::Complete => {
-                if let Some(dialog_page) = self.dialog_pages.pop_front() {
-                    match dialog_page {
-                        DialogPage::New(name) => {
-                            let list = List::new(&name);
-                            match self.store.lists().save(&list) {
-                                Ok(_) => {
-                                    tasks.push(
-                                        self.update(Message::Tasks(TasksAction::AddList(list))),
-                                    );
-                                }
-                                Err(err) => {
-                                    tracing::error!("Error updating list: {err}");
-                                }
-                            }
-                        }
-                        DialogPage::Rename(entity, name) => {
-                            let data = if let Some(entity) = entity {
-                                self.nav_model.data_mut::<List>(entity)
-                            } else {
-                                self.nav_model.active_data_mut::<List>()
-                            };
-
-                            if let Some(list) = data {
-                                match self
-                                    .store
-                                    .lists()
-                                    .update(list.id, |l| l.name = name.clone())
-                                {
-                                    Ok(_) => {
-                                        list.name.clone_from(&name.clone());
-                                        let list = list.clone();
-                                        self.nav_model
-                                            .text_set(self.nav_model.active(), name.clone());
-
-                                        tasks.push(self.update(Message::Content(
-                                            content::Message::SetList(Some(list)),
-                                        )));
-                                    }
-                                    Err(err) => {
-                                        tracing::error!("Error updating list: {err}");
-                                    }
-                                }
-                            }
-                        }
-                        DialogPage::Delete(entity) => {
-                            tasks
-                                .push(self.update(Message::Tasks(TasksAction::DeleteList(entity))));
-                        }
-                        DialogPage::Icon(entity, name, _) => {
-                            let data = if let Some(entity) = entity {
-                                self.nav_model.data::<List>(entity)
-                            } else {
-                                self.nav_model.active_data::<List>()
-                            };
-                            if let Some(list) = data {
-                                let entity = self.nav_model.active();
-                                self.nav_model.text_set(entity, list.name.clone());
-                                self.nav_model
-                                    .icon_set(entity, widget::icon::from_name(name.clone()).size(16).icon());
-                            }
-                            if let Some(list) = self.nav_model.active_data_mut::<List>() {
-                                list.icon = Some(name);
-                                let list = list.clone();
-                                if let Err(err) = self
-                                    .store
-                                    .lists()
-                                    .update(list.id, |l| l.icon = list.icon.clone())
-                                {
-                                    tracing::error!("Error updating list: {err}");
-                                }
-                                tasks.push(self.update(Message::Content(
-                                    content::Message::SetList(Some(list)),
-                                )));
-                            }
-                        }
-                        DialogPage::Calendar(date) => {
-                            self.details
-                                .update(details::Message::SetDueDate(date.selected));
-                        }
-                        DialogPage::Export(content) => {
-                            let Ok(mut clipboard) = ClipboardContext::new() else {
-                                tracing::error!("Clipboard is not available");
-                                return;
-                            };
-                            if let Err(error) = clipboard.set_contents(content) {
-                                tracing::error!("Error setting clipboard contents: {error}");
-                            }
-                        }
-                    }
-                }
-            }
-            DialogAction::None => (),
-        }
-    }
-
-    fn update_app(
-        &mut self,
-        tasks: &mut Vec<cosmic::Task<cosmic::Action<Message>>>,
-        application_action: ApplicationAction,
-    ) {
-        match application_action {
-            ApplicationAction::WindowClose => {
-                if let Some(window_id) = self.core.main_window_id() {
-                    tasks.push(cosmic::iced::window::close(window_id));
-                }
-            }
-            ApplicationAction::WindowNew => match env::current_exe() {
-                Ok(exe) => match process::Command::new(&exe).spawn() {
-                    Ok(_) => {}
-                    Err(err) => {
-                        eprintln!("failed to execute {exe:?}: {err}");
-                    }
-                },
-                Err(err) => {
-                    eprintln!("failed to get current executable path: {err}");
-                }
-            },
-            ApplicationAction::AppTheme(theme) => {
-                if let Err(err) = self.config.set_app_theme(&self.handler, theme.into()) {
-                    tracing::error!("{err}")
-                }
-            }
-            ApplicationAction::ToggleHideCompleted(value) => {
-                if let Err(err) = self.config.set_hide_completed(&self.handler, value) {
-                    tracing::error!("{err}")
-                }
-                tasks.push(self.update(Message::Content(content::Message::SetConfig(
-                    self.config.clone(),
-                ))));
-            }
-            ApplicationAction::SystemThemeModeChange => {
-                tasks.push(cosmic::command::set_theme(self.config.app_theme.theme()));
-            }
-            ApplicationAction::Key(modifiers, key) => {
-                for (key_bind, action) in self.key_binds.clone().into_iter() {
-                    if key_bind.matches(modifiers, &key) {
-                        tasks.push(self.update(action.message()));
-                    }
-                }
-            }
-            ApplicationAction::Modifiers(modifiers) => {
-                self.modifiers = modifiers;
-            }
-            ApplicationAction::NavMenuAction(nav_menu_action) => match nav_menu_action {
-                NavMenuAction::Rename(entity) => {
-                    tasks.push(self.update(Message::Application(ApplicationAction::Dialog(
-                        DialogAction::Open(DialogPage::Rename(Some(entity), String::new())),
-                    ))));
-                }
-                NavMenuAction::SetIcon(entity) => {
-                    tasks.push(self.update(Message::Application(ApplicationAction::Dialog(
-                        DialogAction::Open(DialogPage::Icon(
-                            Some(entity),
-                            String::new(),
-                            String::new(),
-                        )),
-                    ))));
-                }
-                NavMenuAction::Export(entity) => {
-                    if let Some(list) = self.nav_model.data::<List>(entity) {
-                        match self.store.tasks(list.id).load_all() {
-                            Ok(data) => {
-                                let exported_markdown = export_list(list, &data);
-                                tasks.push(self.update(Message::Application(
-                                    ApplicationAction::Dialog(DialogAction::Open(
-                                        DialogPage::Export(exported_markdown),
-                                    )),
-                                )));
-                            }
-                            Err(err) => {
-                                tracing::error!("Error fetching tasks: {err}");
-                            }
-                        }
-                    }
-                }
-                NavMenuAction::Delete(entity) => {
-                    tasks.push(self.update(Message::Application(ApplicationAction::Dialog(
-                        DialogAction::Open(DialogPage::Delete(Some(entity))),
-                    ))));
-                }
-            },
-            ApplicationAction::ToggleContextPage(context_page) => {
-                if self.context_page == context_page {
-                    self.core.window.show_context = !self.core.window.show_context;
-                } else {
-                    self.context_page = context_page;
-                    self.core.window.show_context = true;
-                }
-                tasks.push(
-                    self.update(Message::Content(content::Message::ContextMenuOpen(
-                        self.core.window.show_context,
-                    ))),
-                );
-            }
-            ApplicationAction::ToggleContextDrawer => {
-                self.core.window.show_context = !self.core.window.show_context;
-                tasks.push(
-                    self.update(Message::Content(content::Message::ContextMenuOpen(
-                        self.core.window.show_context,
-                    ))),
-                );
-            }
-            ApplicationAction::Dialog(dialog_action) => self.update_dialog(tasks, dialog_action),
-            ApplicationAction::Focus(id) => tasks.push(widget::text_input::focus(id)),
-            ApplicationAction::SortByNameAsc => {
-                tasks.push(self.update(Message::Content(content::Message::SetSort(
-                    content::SortType::NameAsc,
-                ))));
-            }
-            ApplicationAction::SortByNameDesc => {
-                tasks.push(self.update(Message::Content(content::Message::SetSort(
-                    content::SortType::NameDesc,
-                ))));
-            }
-            ApplicationAction::SortByDateAsc => {
-                tasks.push(self.update(Message::Content(content::Message::SetSort(
-                    content::SortType::DateAsc,
-                ))));
-            }
-            ApplicationAction::SortByDateDesc => {
-                tasks.push(self.update(Message::Content(content::Message::SetSort(
-                    content::SortType::DateDesc,
-                ))));
-            }
-        }
-    }
-
-    fn update_tasks(
-        &mut self,
-        tasks: &mut Vec<cosmic::Task<cosmic::Action<Message>>>,
-        tasks_action: TasksAction,
-    ) {
-        match tasks_action {
-            TasksAction::FetchLists => match self.store.lists().load_all() {
-                Ok(lists) => {
-                    tasks.push(self.update(Message::Tasks(TasksAction::PopulateLists(lists))));
-                }
-                Err(err) => {
-                    tracing::error!("Error fetching lists: {err}");
-                }
-            },
-            TasksAction::PopulateLists(lists) => {
-                for list in lists {
-                    self.create_nav_item(&list);
-                }
-                let Some(entity) = self.nav_model.iter().next() else {
-                    return;
-                };
-                self.nav_model.activate(entity);
-                let task = self.on_nav_select(entity);
-                tasks.push(task);
-            }
-            TasksAction::AddList(list) => {
-                self.create_nav_item(&list);
-                let Some(entity) = self.nav_model.iter().last() else {
-                    return;
-                };
-                let task = self.on_nav_select(entity);
-                tasks.push(task);
-            }
-            TasksAction::DeleteList(entity) => {
-                let data = if let Some(entity) = entity {
-                    self.nav_model.data::<List>(entity)
-                } else {
-                    self.nav_model.active_data::<List>()
-                };
-                if let Some(list) = data {
-                    if let Err(err) = self.store.lists().delete(list.id) {
-                        tracing::error!("Error deleting list: {err}");
-                    }
-
-                    tasks.push(self.update(Message::Content(content::Message::SetList(None))));
-                }
-                self.nav_model.remove(self.nav_model.active());
-            }
-        }
-    }
-}
-
-impl Application for Tasks {
+impl Application for AppModel {
     type Executor = cosmic::executor::Default;
     type Flags = crate::app::Flags;
     type Message = Message;
@@ -508,18 +132,17 @@ impl Application for Tasks {
             ])
             .developers([("Eduardo Flores", "edfloreshz@proton.me")]);
 
-        let mut app = Tasks {
+        let mut app = AppModel {
             core,
-            about,
-            store: flags.store.clone(),
-            nav_model,
-            content: Content::new(flags.store.clone()),
-            details: Details::new(flags.store),
-            handler: flags.handler,
-            config: flags.config,
-            app_themes: vec![fl!("match-desktop"), fl!("dark"), fl!("light")],
             context_page: ContextPage::Settings,
+            about,
+            nav: nav_model,
             key_binds: key_binds(),
+            handler: flags.handler,
+            config: flags.config.clone(),
+            store: flags.store.clone(),
+            content: Content::new(flags.store.clone(), flags.config),
+            details: Details::new(flags.store),
             modifiers: Modifiers::empty(),
             dialog_pages: VecDeque::new(),
             dialog_text_input: widget::Id::unique(),
@@ -545,17 +168,16 @@ impl Application for Tasks {
             ContextPage::About => app::context_drawer::about(
                 &self.about,
                 |url| Message::Open(url.to_string()),
-                Message::Application(ApplicationAction::ToggleContextDrawer),
+                Message::ToggleContextDrawer,
             )
             .title(self.context_page.title()),
-            ContextPage::Settings => app::context_drawer::context_drawer(
-                self.settings(),
-                Message::Application(ApplicationAction::ToggleContextDrawer),
-            )
-            .title(self.context_page.title()),
+            ContextPage::Settings => {
+                app::context_drawer::context_drawer(self.settings(), Message::ToggleContextDrawer)
+                    .title(self.context_page.title())
+            }
             ContextPage::TaskDetails => app::context_drawer::context_drawer(
                 self.details.view().map(Message::Details),
-                Message::Application(ApplicationAction::ToggleContextDrawer),
+                Message::ToggleContextDrawer,
             )
             .title(self.context_page.title()),
         })
@@ -585,7 +207,11 @@ impl Application for Tasks {
                 ),
                 cosmic::widget::menu::Item::Button(
                     fl!("icon"),
-                    Some(widget::icon::from_name("face-smile-big-symbolic").size(14).handle()),
+                    Some(
+                        widget::icon::from_name("face-smile-big-symbolic")
+                            .size(14)
+                            .handle(),
+                    ),
                     NavMenuAction::SetIcon(id),
                 ),
                 cosmic::widget::menu::Item::Button(
@@ -595,7 +221,11 @@ impl Application for Tasks {
                 ),
                 cosmic::widget::menu::Item::Button(
                     fl!("delete"),
-                    Some(widget::icon::from_name("user-trash-full-symbolic").size(14).handle()),
+                    Some(
+                        widget::icon::from_name("user-trash-full-symbolic")
+                            .size(14)
+                            .handle(),
+                    ),
                     NavMenuAction::Delete(id),
                 ),
             ],
@@ -603,7 +233,7 @@ impl Application for Tasks {
     }
 
     fn nav_model(&self) -> Option<&widget::segmented_button::SingleSelectModel> {
-        Some(&self.nav_model)
+        Some(&self.nav)
     }
 
     fn on_escape(&mut self) -> app::Task<Self::Message> {
@@ -618,8 +248,8 @@ impl Application for Tasks {
 
     fn on_nav_select(&mut self, entity: Entity) -> app::Task<Self::Message> {
         let mut tasks = vec![];
-        self.nav_model.activate(entity);
-        let location_opt = self.nav_model.data::<List>(entity);
+        self.nav.activate(entity);
+        let location_opt = self.nav.data::<List>(entity);
 
         if let Some(list) = location_opt {
             let message = Message::Content(content::Message::SetList(Some(list.clone())));
@@ -685,7 +315,6 @@ impl Application for Tasks {
     }
 
     fn update(&mut self, message: Self::Message) -> app::Task<Self::Message> {
-        let mut tasks = vec![];
         match message {
             Message::Open(url) => {
                 if let Err(err) = open::that_detached(url) {
@@ -693,20 +322,198 @@ impl Application for Tasks {
                 }
             }
             Message::Content(message) => {
-                self.update_content(&mut tasks, message);
+                return self.update_content(message);
             }
             Message::Details(message) => {
-                self.update_details(&mut tasks, message);
+                return self.update_details(message);
             }
-            Message::Tasks(tasks_action) => {
-                self.update_tasks(&mut tasks, tasks_action);
+            Message::Tasks(action) => {
+                return self.update_tasks(action);
             }
-            Message::Application(application_action) => {
-                self.update_app(&mut tasks, application_action);
+            Message::Application(action) => match action {
+                ApplicationAction::AppTheme(theme) => {
+                    if let Err(err) = self.config.set_app_theme(&self.handler, theme.into()) {
+                        tracing::error!("{err}")
+                    }
+                }
+                ApplicationAction::SystemThemeModeChange => {
+                    return cosmic::command::set_theme(self.config.app_theme.theme());
+                }
+                ApplicationAction::Key(modifiers, key) => {
+                    for (key_bind, action) in self.key_binds.clone().into_iter() {
+                        if key_bind.matches(modifiers, &key) {
+                            return cosmic::task::message(action.message());
+                        }
+                    }
+                }
+                ApplicationAction::Modifiers(modifiers) => {
+                    self.modifiers = modifiers;
+                }
+                ApplicationAction::Focus(id) => {
+                    return cosmic::task::message(Message::Application(ApplicationAction::Focus(
+                        id,
+                    )));
+                }
+            },
+            Message::Menu(action) => match action {
+                MenuAction::About => {
+                    return cosmic::task::message(Message::ToggleContextPage(ContextPage::About));
+                }
+                MenuAction::Settings => {
+                    return cosmic::task::message(Message::ToggleContextPage(
+                        ContextPage::Settings,
+                    ));
+                }
+                MenuAction::WindowClose => {
+                    if let Some(window_id) = self.core.main_window_id() {
+                        return cosmic::iced::window::close(window_id);
+                    }
+                }
+                MenuAction::WindowNew => match env::current_exe() {
+                    Ok(exe) => match process::Command::new(&exe).spawn() {
+                        Ok(_) => {}
+                        Err(err) => {
+                            eprintln!("failed to execute {exe:?}: {err}");
+                        }
+                    },
+                    Err(err) => {
+                        eprintln!("failed to get current executable path: {err}");
+                    }
+                },
+                MenuAction::NewList => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::New(String::new()),
+                    )));
+                }
+                MenuAction::DeleteList => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::Delete(None),
+                    )));
+                }
+                MenuAction::RenameList => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::Rename(None, String::new()),
+                    )));
+                }
+                MenuAction::Icon => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::Icon(None, String::new(), String::new()),
+                    )));
+                }
+                MenuAction::ToggleHideCompleted(completed) => {
+                    if let Err(err) = self.config.set_hide_completed(&self.handler, completed) {
+                        tracing::error!("{err}")
+                    }
+                    return cosmic::task::message(Message::Content(content::Message::SetConfig(
+                        self.config.clone(),
+                    )));
+                }
+                MenuAction::SortByNameAsc => {
+                    return cosmic::task::message(Message::Content(content::Message::SetSort(
+                        content::SortType::NameAsc,
+                    )));
+                }
+                MenuAction::SortByNameDesc => {
+                    return cosmic::task::message(Message::Content(content::Message::SetSort(
+                        content::SortType::NameDesc,
+                    )));
+                }
+                MenuAction::SortByDateAsc => {
+                    return cosmic::task::message(Message::Content(content::Message::SetSort(
+                        content::SortType::DateAsc,
+                    )));
+                }
+                MenuAction::SortByDateDesc => {
+                    return cosmic::task::message(Message::Content(content::Message::SetSort(
+                        content::SortType::DateDesc,
+                    )));
+                }
+            },
+            Message::Dialog(action) => match action {
+                DialogAction::Open(page) => {
+                    match page {
+                        DialogPage::Rename(entity, _) => {
+                            let data = if let Some(entity) = entity {
+                                self.nav.data::<List>(entity)
+                            } else {
+                                self.nav.active_data::<List>()
+                            };
+                            if let Some(list) = data {
+                                self.dialog_pages
+                                    .push_back(DialogPage::Rename(entity, list.name.clone()));
+                            }
+                        }
+                        page => self.dialog_pages.push_back(page),
+                    }
+                    return cosmic::task::message(Message::Application(ApplicationAction::Focus(
+                        self.dialog_text_input.clone(),
+                    )));
+                }
+                DialogAction::Update(dialog_page) => {
+                    self.dialog_pages[0] = dialog_page;
+                }
+                DialogAction::Close => {
+                    self.dialog_pages.pop_front();
+                }
+                DialogAction::Complete => {
+                    if let Some(message) = self.complete_dialog() {
+                        return cosmic::task::message(message);
+                    }
+                }
+                DialogAction::None => (),
+            },
+            Message::ToggleContextPage(page) => {
+                if self.context_page == page {
+                    self.core.window.show_context = !self.core.window.show_context;
+                } else {
+                    self.context_page = page;
+                    self.core.window.show_context = true;
+                }
+                return cosmic::task::message(Message::Content(content::Message::ContextMenuOpen(
+                    self.core.window.show_context,
+                )));
+            }
+            Message::NavMenu(action) => match action {
+                NavMenuAction::Rename(entity) => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::Rename(Some(entity), String::new()),
+                    )))
+                }
+                NavMenuAction::SetIcon(entity) => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::Icon(Some(entity), String::new(), String::new()),
+                    )))
+                }
+                NavMenuAction::Export(entity) => {
+                    if let Some(list) = self.nav.data::<List>(entity) {
+                        match self.store.tasks(list.id).load_all() {
+                            Ok(data) => {
+                                let exported_markdown = Self::export_list(list, &data);
+                                return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                                    DialogPage::Export(exported_markdown),
+                                )));
+                            }
+                            Err(err) => {
+                                tracing::error!("Error fetching tasks: {err}");
+                            }
+                        }
+                    }
+                }
+                NavMenuAction::Delete(entity) => {
+                    return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                        DialogPage::Delete(Some(entity)),
+                    )));
+                }
+            },
+            Message::ToggleContextDrawer => {
+                self.core.window.show_context = !self.core.window.show_context;
+                return cosmic::task::message(Message::Content(content::Message::ContextMenuOpen(
+                    self.core.window.show_context,
+                )));
             }
         }
 
-        app::Task::batch(tasks)
+        app::Task::none()
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
@@ -714,9 +521,226 @@ impl Application for Tasks {
     }
 }
 
+impl AppModel {
+    fn settings(&self) -> Element<'_, Message> {
+        widget::scrollable(widget::settings::section().title(fl!("appearance")).add(
+            widget::settings::item::item(
+                fl!("theme"),
+                widget::dropdown(
+                    vec![fl!("match-desktop"), fl!("dark"), fl!("light")],
+                    Some(self.config.app_theme.into()),
+                    |theme| Message::Application(ApplicationAction::AppTheme(theme)),
+                ),
+            ),
+        ))
+        .into()
+    }
 
-pub fn export_list(list: &List, tasks: &[crate::model::Task]) -> String {
-    let markdown = list.markdown();
-    let tasks_markdown: String = tasks.iter().map(Markdown::markdown).collect();
-    format!("{markdown}\n{tasks_markdown}")
+    fn create_nav_item(&mut self, list: &List) -> EntityMut<'_, SingleSelect> {
+        let icon =
+            widget::icon::from_name(list.icon.as_deref().unwrap_or("view-list-symbolic")).size(16);
+        self.nav
+            .insert()
+            .text(list.name.clone())
+            .icon(icon)
+            .data(list.clone())
+    }
+
+    fn update_content(&mut self, message: content::Message) -> app::Task<Message> {
+        for task in self.content.update(message) {
+            match task {
+                content::Output::Focus(id) => return cosmic::widget::text_input::focus(id),
+                content::Output::OpenTaskDetails(task) => {
+                    let entity = self.details.priority_model.entity_at(task.priority as u16);
+                    if let Some(entity) = entity {
+                        self.details.priority_model.activate(entity);
+                    }
+                    self.details.task = task.clone();
+                    self.details.text_editor_content =
+                        widget::text_editor::Content::with_text(&task.notes);
+
+                    return cosmic::task::message(Message::ToggleContextPage(
+                        ContextPage::TaskDetails,
+                    ));
+                }
+                content::Output::ToggleHideCompleted(list) => {
+                    match self.store.lists().update(list.id, |list| {
+                        list.hide_completed = !list.hide_completed;
+                    }) {
+                        Ok(list) => {
+                            if let Some(data) = self.nav.active_data_mut::<List>() {
+                                data.hide_completed = list.hide_completed;
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("Error updating list: {err}");
+                        }
+                    }
+                }
+            }
+        }
+        app::Task::none()
+    }
+
+    fn update_details(&mut self, message: details::Message) -> app::Task<Message> {
+        let mut tasks = vec![];
+        for task in self.details.update(message) {
+            match task {
+                details::Output::OpenCalendarDialog => {
+                    tasks.push(self.update(Message::Dialog(DialogAction::Open(
+                        DialogPage::Calendar(CalendarModel::now()),
+                    ))));
+                }
+                details::Output::RefreshTask(task) => {
+                    tasks.push(self.update(Message::Content(content::Message::RefreshTask(
+                        task.clone(),
+                    ))));
+                }
+            }
+        }
+        app::Task::batch(tasks)
+    }
+
+    fn complete_dialog(&mut self) -> Option<Message> {
+        if let Some(dialog_page) = self.dialog_pages.pop_front() {
+            match dialog_page {
+                DialogPage::New(name) => {
+                    let list = List::new(&name);
+                    match self.store.lists().save(&list) {
+                        Ok(_) => {
+                            return Some(Message::Tasks(TasksAction::AddList(list)));
+                        }
+                        Err(err) => {
+                            tracing::error!("Error updating list: {err}");
+                        }
+                    }
+                }
+                DialogPage::Rename(entity, name) => {
+                    let data = if let Some(entity) = entity {
+                        self.nav.data_mut::<List>(entity)
+                    } else {
+                        self.nav.active_data_mut::<List>()
+                    };
+
+                    if let Some(list) = data {
+                        match self
+                            .store
+                            .lists()
+                            .update(list.id, |l| l.name = name.clone())
+                        {
+                            Ok(_) => {
+                                list.name.clone_from(&name.clone());
+                                let list = list.clone();
+                                self.nav.text_set(self.nav.active(), name.clone());
+                                return Some(Message::Content(content::Message::SetList(Some(
+                                    list,
+                                ))));
+                            }
+                            Err(err) => {
+                                tracing::error!("Error updating list: {err}");
+                            }
+                        }
+                    }
+                }
+                DialogPage::Delete(entity) => {
+                    return Some(Message::Tasks(TasksAction::DeleteList(entity)));
+                }
+                DialogPage::Icon(entity, name, _) => {
+                    let data = if let Some(entity) = entity {
+                        self.nav.data::<List>(entity)
+                    } else {
+                        self.nav.active_data::<List>()
+                    };
+                    if let Some(list) = data {
+                        let entity = self.nav.active();
+                        self.nav.text_set(entity, list.name.clone());
+                        self.nav.icon_set(
+                            entity,
+                            widget::icon::from_name(name.clone()).size(16).icon(),
+                        );
+                    }
+                    if let Some(list) = self.nav.active_data_mut::<List>() {
+                        list.icon = Some(name);
+                        let list = list.clone();
+                        if let Err(err) = self
+                            .store
+                            .lists()
+                            .update(list.id, |l| l.icon = list.icon.clone())
+                        {
+                            tracing::error!("Error updating list: {err}");
+                        }
+                        return Some(Message::Content(content::Message::SetList(Some(list))));
+                    }
+                }
+                DialogPage::Calendar(date) => {
+                    self.details
+                        .update(details::Message::SetDueDate(date.selected));
+                }
+                DialogPage::Export(content) => {
+                    let Ok(mut clipboard) = ClipboardContext::new() else {
+                        tracing::error!("Clipboard is not available");
+                        return None;
+                    };
+                    if let Err(error) = clipboard.set_contents(content) {
+                        tracing::error!("Error setting clipboard contents: {error}");
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn update_tasks(&mut self, action: TasksAction) -> app::Task<Message> {
+        match action {
+            TasksAction::FetchLists => match self.store.lists().load_all() {
+                Ok(lists) => {
+                    return self.update(Message::Tasks(TasksAction::PopulateLists(lists)));
+                }
+                Err(err) => {
+                    tracing::error!("Error fetching lists: {err}");
+                }
+            },
+            TasksAction::PopulateLists(lists) => {
+                for list in lists {
+                    self.create_nav_item(&list);
+                }
+                let Some(entity) = self.nav.iter().next() else {
+                    return app::Task::none();
+                };
+                self.nav.activate(entity);
+                return self.on_nav_select(entity);
+            }
+            TasksAction::AddList(list) => {
+                self.create_nav_item(&list);
+                let Some(entity) = self.nav.iter().last() else {
+                    return app::Task::none();
+                };
+                return self.on_nav_select(entity);
+            }
+            TasksAction::DeleteList(entity) => {
+                let data = if let Some(entity) = entity {
+                    self.nav.data::<List>(entity)
+                } else {
+                    self.nav.active_data::<List>()
+                };
+                if let Some(list) = data {
+                    if let Err(err) = self.store.lists().delete(list.id) {
+                        tracing::error!("Error deleting list: {err}");
+                    }
+
+                    return cosmic::task::message(Message::Content(content::Message::SetList(
+                        None,
+                    )));
+                }
+                self.nav.remove(self.nav.active());
+            }
+        }
+        app::Task::none()
+    }
+
+    pub fn export_list(list: &List, tasks: &[crate::model::Task]) -> String {
+        let markdown = list.markdown();
+        let tasks_markdown: String = tasks.iter().map(Markdown::markdown).collect();
+        format!("{markdown}\n{tasks_markdown}")
+    }
 }

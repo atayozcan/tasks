@@ -7,15 +7,15 @@ use cosmic::{
 };
 
 use crate::{
-    app::{Action, Message},
+    app::{MenuAction, Message},
     fl,
 };
 
-use crate::core::config::TasksConfig;
+use crate::core::config::AppConfig;
 
 pub fn menu_bar<'a>(
-    key_binds: &HashMap<KeyBind, Action>,
-    config: &TasksConfig,
+    key_binds: &HashMap<KeyBind, MenuAction>,
+    config: &AppConfig,
 ) -> Element<'a, Message> {
     MenuBar::new(vec![
         Tree::with_children(
@@ -26,19 +26,19 @@ pub fn menu_bar<'a>(
                     Item::Button(
                         fl!("new-window"),
                         Some(widget::icon::from_name("tabs-stack-symbolic").size(14).handle()),
-                        Action::WindowNew,
+                        MenuAction::WindowNew,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("new-list"),
                         Some(widget::icon::from_name("plus-square-filled-symbolic").size(14).handle()),
-                        Action::NewList,
+                        MenuAction::NewList,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("quit"),
                         Some(widget::icon::from_name("cross-small-square-filled-symbolic").size(14).handle()),
-                        Action::WindowClose,
+                        MenuAction::WindowClose,
                     ),
                 ],
             ),
@@ -51,19 +51,19 @@ pub fn menu_bar<'a>(
                     Item::Button(
                         fl!("rename"),
                         Some(widget::icon::from_name("edit-symbolic").size(14).handle()),
-                        Action::RenameList,
+                        MenuAction::RenameList,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("icon"),
                         Some(widget::icon::from_name("face-smile-big-symbolic").size(14).handle()),
-                        Action::Icon,
+                        MenuAction::Icon,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("delete"),
                         Some(widget::icon::from_name("user-trash-full-symbolic").size(14).handle()),
-                        Action::DeleteList,
+                        MenuAction::DeleteList,
                     ),
                 ],
             ),
@@ -76,20 +76,20 @@ pub fn menu_bar<'a>(
                     Item::Button(
                         fl!("menu-settings"),
                         Some(widget::icon::from_name("settings-symbolic").size(14).handle()),
-                        Action::Settings,
+                        MenuAction::Settings,
                     ),
                     Item::Divider,
                     Item::CheckBox(
                         fl!("hide-completed"),
                         None,
                         config.hide_completed,
-                        Action::ToggleHideCompleted(!config.hide_completed),
+                        MenuAction::ToggleHideCompleted(!config.hide_completed),
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("menu-about"),
                         Some(widget::icon::from_name("info-outline-symbolic").size(14).handle()),
-                        Action::About,
+                        MenuAction::About,
                     ),
                 ],
             ),
@@ -99,10 +99,10 @@ pub fn menu_bar<'a>(
             items(
                 key_binds,
                 vec![
-                    Item::Button(fl!("sort-name-asc"), None, Action::SortByNameAsc),
-                    Item::Button(fl!("sort-name-desc"), None, Action::SortByNameDesc),
-                    Item::Button(fl!("sort-date-asc"), None, Action::SortByDateAsc),
-                    Item::Button(fl!("sort-date-desc"), None, Action::SortByDateDesc),
+                    Item::Button(fl!("sort-name-asc"), None, MenuAction::SortByNameAsc),
+                    Item::Button(fl!("sort-name-desc"), None, MenuAction::SortByNameDesc),
+                    Item::Button(fl!("sort-date-asc"), None, MenuAction::SortByDateAsc),
+                    Item::Button(fl!("sort-date-desc"), None, MenuAction::SortByDateDesc),
                 ],
             ),
         ),

@@ -13,7 +13,7 @@ use cosmic::{
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 
 use crate::{
-    core::{config},
+    core::config,
     fl,
     model::{self, List, Status},
     services::store::Store,
@@ -27,7 +27,7 @@ pub struct Content {
     sub_task_editing: SecondaryMap<DefaultKey, bool>,
     task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
     sub_task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
-    config: config::TasksConfig,
+    config: config::AppConfig,
     input: String,
     storage: Store,
     context_menu_open: bool,
@@ -71,7 +71,7 @@ pub enum Message {
 
     SetList(Option<List>),
     SetTasks(Vec<model::Task>),
-    SetConfig(config::TasksConfig),
+    SetConfig(config::AppConfig),
     RefreshTask(model::Task),
     Empty,
     ContextMenuOpen(bool),
@@ -126,7 +126,7 @@ impl MenuAction for SubTaskAction {
 }
 
 impl Content {
-    pub fn new(storage: Store) -> Self {
+    pub fn new(storage: Store, config: config::AppConfig) -> Self {
         Self {
             list: None,
             tasks: SlotMap::new(),
@@ -136,7 +136,7 @@ impl Content {
             task_input_ids: SecondaryMap::new(),
             sub_task_input_ids: SecondaryMap::new(),
             input: String::new(),
-            config: config::TasksConfig::config(),
+            config: config,
             storage,
             context_menu_open: false,
             search_bar_visible: false,
@@ -160,14 +160,14 @@ impl Content {
 
         hide_completed_button = hide_completed_button.on_press(Message::ToggleHideCompleted);
 
-        let search_button = widget::button::icon(widget::icon::from_name("edit-find-symbolic").size(18))
-            .selected(self.search_bar_visible)
-            .padding(spacing.space_xxs)
-            .on_press(Message::ToggleSearchBar);
+        let search_button =
+            widget::button::icon(widget::icon::from_name("edit-find-symbolic").size(18))
+                .selected(self.search_bar_visible)
+                .padding(spacing.space_xxs)
+                .on_press(Message::ToggleSearchBar);
 
-        let icon = widget::icon::from_name(
-            list.icon.as_deref().unwrap_or("view-list-symbolic")
-        ).size( spacing.space_m);
+        let icon = widget::icon::from_name(list.icon.as_deref().unwrap_or("view-list-symbolic"))
+            .size(spacing.space_m);
         widget::row::with_capacity(4)
             .align_y(Alignment::Center)
             .spacing(spacing.space_s)
@@ -264,8 +264,10 @@ impl Content {
 
         let more_button = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
             Element::from(
-                cosmic::widget::button::icon(widget::icon::from_name("view-more-symbolic").size(18))
-                    .on_press(Message::Empty),
+                cosmic::widget::button::icon(
+                    widget::icon::from_name("view-more-symbolic").size(18),
+                )
+                .on_press(Message::Empty),
             ),
             widget::menu::items(
                 &HashMap::new(),
@@ -373,8 +375,10 @@ impl Content {
 
         let more_button = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
             Element::from(
-                cosmic::widget::button::icon(widget::icon::from_name("view-more-symbolic").size(18))
-                    .on_press(Message::Empty),
+                cosmic::widget::button::icon(
+                    widget::icon::from_name("view-more-symbolic").size(18),
+                )
+                .on_press(Message::Empty),
             ),
             widget::menu::items(
                 &HashMap::new(),
@@ -456,7 +460,9 @@ impl Content {
 
         let container = widget::container(
             widget::column::with_children(vec![
-                widget::icon::from_name("task-past-due-symbolic").size(56).into(),
+                widget::icon::from_name("task-past-due-symbolic")
+                    .size(56)
+                    .into(),
                 widget::text::title1(fl!("no-tasks")).into(),
                 widget::text(fl!("no-tasks-suggestion")).into(),
             ])
@@ -905,7 +911,9 @@ impl Content {
         let Some(ref list) = self.list else {
             return widget::container(
                 widget::column::with_children(vec![
-                    widget::icon::from_name("applications-office-symbolic").size(56).into(),
+                    widget::icon::from_name("applications-office-symbolic")
+                        .size(56)
+                        .into(),
                     widget::text::title1(fl!("no-list-selected")).into(),
                     widget::text(fl!("no-list-suggestion")).into(),
                 ])
