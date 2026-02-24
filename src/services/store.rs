@@ -1,6 +1,6 @@
-use crate::{Error, Result};
 use crate::model::{List, Task};
 use crate::StoreError;
+use crate::{Error, Result};
 use ron::ser::PrettyConfig;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,8 +11,6 @@ const LISTS_REGISTRY: &str = "lists.ron";
 fn pretty() -> PrettyConfig {
     PrettyConfig::new().depth_limit(6).struct_names(true)
 }
-
-// ── Store ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -37,8 +35,6 @@ impl Store {
         }
     }
 
-    // ── Path helpers (private) ────────────────────────────────────────────────
-
     fn registry_path(&self) -> PathBuf {
         self.base_dir.join(LISTS_REGISTRY)
     }
@@ -51,8 +47,6 @@ impl Store {
         self.list_dir(list_id).join(format!("{task_id}.ron"))
     }
 }
-
-// ── ListStore ─────────────────────────────────────────────────────────────────
 
 pub struct ListStore<'s> {
     store: &'s Store,
@@ -129,8 +123,6 @@ impl ListStore<'_> {
         Ok(())
     }
 }
-
-// ── TaskStore ─────────────────────────────────────────────────────────────────
 
 pub struct TaskStore<'s> {
     store: &'s Store,

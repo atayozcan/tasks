@@ -322,14 +322,89 @@ impl Application for AppModel {
                 }
             }
             Message::Content(message) => {
-                return self.update_content(message);
+                if let Some(output) = self.content.update(message) {
+                    match output {
+                        content::Output::Focus(id) => return cosmic::widget::text_input::focus(id),
+                        content::Output::OpenTaskDetails(task) => {
+                            let tasks = vec![
+                                cosmic::task::message(Message::Details(details::Message::SetTask(
+                                    task.clone(),
+                                    self.nav.active_data::<List>().map(|list| list.id),
+                                ))),
+                                cosmic::task::message(Message::ToggleContextPage(
+                                    ContextPage::TaskDetails,
+                                )),
+                            ];
+                            return app::Task::batch(tasks);
+                        }
+                        content::Output::ToggleHideCompleted(list) => {
+                            if let Some(data) = self.nav.active_data_mut::<List>() {
+                                data.hide_completed = list.hide_completed;
+                            }
+                        }
+                    }
+                }
             }
             Message::Details(message) => {
-                return self.update_details(message);
+                if let Some(output) = self.details.update(message) {
+                    match output {
+                        details::Output::OpenCalendarDialog => {
+                            return cosmic::task::message(Message::Dialog(DialogAction::Open(
+                                DialogPage::Calendar(CalendarModel::now()),
+                            )));
+                        }
+                        details::Output::RefreshTask(task) => {
+                            return cosmic::task::message(Message::Content(
+                                content::Message::RefreshTask(task.clone()),
+                            ));
+                        }
+                    }
+                }
             }
-            Message::Tasks(action) => {
-                return self.update_tasks(action);
-            }
+            Message::Tasks(action) => match action {
+                TasksAction::FetchLists => match self.store.lists().load_all() {
+                    Ok(lists) => {
+                        return self.update(Message::Tasks(TasksAction::PopulateLists(lists)));
+                    }
+                    Err(err) => {
+                        tracing::error!("Error fetching lists: {err}");
+                    }
+                },
+                TasksAction::PopulateLists(lists) => {
+                    for list in lists {
+                        self.create_nav_item(&list);
+                    }
+                    let Some(entity) = self.nav.iter().next() else {
+                        return app::Task::none();
+                    };
+                    self.nav.activate(entity);
+                    return self.on_nav_select(entity);
+                }
+                TasksAction::AddList(list) => {
+                    self.create_nav_item(&list);
+                    let Some(entity) = self.nav.iter().last() else {
+                        return app::Task::none();
+                    };
+                    return self.on_nav_select(entity);
+                }
+                TasksAction::DeleteList(entity) => {
+                    let data = if let Some(entity) = entity {
+                        self.nav.data::<List>(entity)
+                    } else {
+                        self.nav.active_data::<List>()
+                    };
+                    if let Some(list) = data {
+                        if let Err(err) = self.store.lists().delete(list.id) {
+                            tracing::error!("Error deleting list: {err}");
+                        }
+
+                        return cosmic::task::message(Message::Content(content::Message::SetList(
+                            None,
+                        )));
+                    }
+                    self.nav.remove(self.nav.active());
+                }
+            },
             Message::Application(action) => match action {
                 ApplicationAction::AppTheme(theme) => {
                     if let Err(err) = self.config.set_app_theme(&self.handler, theme.into()) {
@@ -546,61 +621,6 @@ impl AppModel {
             .data(list.clone())
     }
 
-    fn update_content(&mut self, message: content::Message) -> app::Task<Message> {
-        for task in self.content.update(message) {
-            match task {
-                content::Output::Focus(id) => return cosmic::widget::text_input::focus(id),
-                content::Output::OpenTaskDetails(task) => {
-                    let entity = self.details.priority_model.entity_at(task.priority as u16);
-                    if let Some(entity) = entity {
-                        self.details.priority_model.activate(entity);
-                    }
-                    self.details.task = task.clone();
-                    self.details.text_editor_content =
-                        widget::text_editor::Content::with_text(&task.notes);
-
-                    return cosmic::task::message(Message::ToggleContextPage(
-                        ContextPage::TaskDetails,
-                    ));
-                }
-                content::Output::ToggleHideCompleted(list) => {
-                    match self.store.lists().update(list.id, |list| {
-                        list.hide_completed = !list.hide_completed;
-                    }) {
-                        Ok(list) => {
-                            if let Some(data) = self.nav.active_data_mut::<List>() {
-                                data.hide_completed = list.hide_completed;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::error!("Error updating list: {err}");
-                        }
-                    }
-                }
-            }
-        }
-        app::Task::none()
-    }
-
-    fn update_details(&mut self, message: details::Message) -> app::Task<Message> {
-        let mut tasks = vec![];
-        for task in self.details.update(message) {
-            match task {
-                details::Output::OpenCalendarDialog => {
-                    tasks.push(self.update(Message::Dialog(DialogAction::Open(
-                        DialogPage::Calendar(CalendarModel::now()),
-                    ))));
-                }
-                details::Output::RefreshTask(task) => {
-                    tasks.push(self.update(Message::Content(content::Message::RefreshTask(
-                        task.clone(),
-                    ))));
-                }
-            }
-        }
-        app::Task::batch(tasks)
-    }
-
     fn complete_dialog(&mut self) -> Option<Message> {
         if let Some(dialog_page) = self.dialog_pages.pop_front() {
             match dialog_page {
@@ -688,54 +708,6 @@ impl AppModel {
             }
         }
         None
-    }
-
-    fn update_tasks(&mut self, action: TasksAction) -> app::Task<Message> {
-        match action {
-            TasksAction::FetchLists => match self.store.lists().load_all() {
-                Ok(lists) => {
-                    return self.update(Message::Tasks(TasksAction::PopulateLists(lists)));
-                }
-                Err(err) => {
-                    tracing::error!("Error fetching lists: {err}");
-                }
-            },
-            TasksAction::PopulateLists(lists) => {
-                for list in lists {
-                    self.create_nav_item(&list);
-                }
-                let Some(entity) = self.nav.iter().next() else {
-                    return app::Task::none();
-                };
-                self.nav.activate(entity);
-                return self.on_nav_select(entity);
-            }
-            TasksAction::AddList(list) => {
-                self.create_nav_item(&list);
-                let Some(entity) = self.nav.iter().last() else {
-                    return app::Task::none();
-                };
-                return self.on_nav_select(entity);
-            }
-            TasksAction::DeleteList(entity) => {
-                let data = if let Some(entity) = entity {
-                    self.nav.data::<List>(entity)
-                } else {
-                    self.nav.active_data::<List>()
-                };
-                if let Some(list) = data {
-                    if let Err(err) = self.store.lists().delete(list.id) {
-                        tracing::error!("Error deleting list: {err}");
-                    }
-
-                    return cosmic::task::message(Message::Content(content::Message::SetList(
-                        None,
-                    )));
-                }
-                self.nav.remove(self.nav.active());
-            }
-        }
-        app::Task::none()
     }
 
     pub fn export_list(list: &List, tasks: &[crate::model::Task]) -> String {

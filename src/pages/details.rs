@@ -28,6 +28,7 @@ pub struct Details {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    SetTask(model::Task, Option<Uuid>),
     SetTitle(String),
     Editor(text_editor::Action),
     Favorite(bool),
@@ -70,9 +71,19 @@ impl Details {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Vec<Output> {
-        let mut tasks = vec![];
+    pub fn update(&mut self, message: Message) -> Option<Output> {
         match message {
+            Message::SetTask(task, list_id) => {
+                self.task = task.clone();
+                self.selected_list = list_id;
+
+                let entity = self.priority_model.entity_at(task.priority as u16);
+                if let Some(entity) = entity {
+                    self.priority_model.activate(entity);
+                }
+                self.task = task.clone();
+                self.text_editor_content = widget::text_editor::Content::with_text(&task.notes);
+            }
             Message::Editor(action) => {
                 self.text_editor_content.perform(action);
                 self.task.notes.clone_from(&self.text_editor_content.text());
@@ -91,7 +102,7 @@ impl Details {
                 }
             }
             Message::OpenCalendarDialog => {
-                tasks.push(Output::OpenCalendarDialog);
+                return Some(Output::OpenCalendarDialog);
             }
             Message::SetDueDate(date) => {
                 let tz = Utc::now().timezone();
@@ -109,8 +120,7 @@ impl Details {
             }
         }
 
-        tasks.push(Output::RefreshTask(self.task.clone()));
-        tasks
+        return Some(Output::RefreshTask(self.task.clone()));
     }
 
     pub fn view(&self) -> Element<'_, Message> {

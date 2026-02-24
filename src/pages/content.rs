@@ -20,9 +20,10 @@ use crate::{
 };
 
 /// Represents the edit state of an input field to prevent feedback loops
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
 enum EditState {
     /// Input is not in edit mode
+    #[default]
     Idle,
     /// Edit mode requested, waiting to focus
     Entering,
@@ -30,12 +31,6 @@ enum EditState {
     Editing,
     /// Edit mode exit requested, waiting to blur
     Exiting,
-}
-
-impl Default for EditState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 pub struct Content {
@@ -48,7 +43,7 @@ pub struct Content {
     sub_task_input_ids: SecondaryMap<DefaultKey, widget::Id>,
     config: config::AppConfig,
     input: String,
-    storage: Store,
+    store: Store,
     context_menu_open: bool,
     search_bar_visible: bool,
     search_query: String,
@@ -156,7 +151,7 @@ impl Content {
             sub_task_input_ids: SecondaryMap::new(),
             input: String::new(),
             config: config,
-            storage,
+            store: storage,
             context_menu_open: false,
             search_bar_visible: false,
             search_query: String::new(),
@@ -547,8 +542,8 @@ impl Content {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Vec<Output> {
-        let mut tasks = Vec::new();
+    pub fn update(&mut self, message: Message) -> Option<Output> {
+        let mut output = None;
         match message {
             Message::ToggleSearchBar => {
                 self.search_bar_visible = !self.search_bar_visible;
@@ -559,7 +554,7 @@ impl Content {
             Message::SearchQueryChanged(query) => {
                 self.search_query = query;
             }
-            Message::Empty => return tasks,
+            Message::Empty => (),
             Message::ContextMenuOpen(open) => {
                 self.context_menu_open = open;
             }
@@ -577,7 +572,7 @@ impl Content {
                 match (&self.list, &list) {
                     (Some(current), Some(list)) => {
                         if current.id != list.id {
-                            match self.storage.tasks(list.id).load_all() {
+                            match self.store.tasks(list.id).load_all() {
                                 Ok(tasks) => {
                                     self.update(Message::SetTasks(tasks));
                                 }
@@ -587,7 +582,7 @@ impl Content {
                             }
                         }
                     }
-                    (None, Some(list)) => match self.storage.tasks(list.id).load_all() {
+                    (None, Some(list)) => match self.store.tasks(list.id).load_all() {
                         Ok(tasks) => {
                             self.update(Message::SetTasks(tasks));
                         }
@@ -620,18 +615,18 @@ impl Content {
                 }
             }
             Message::TaskOpenDetails(id) => match self.tasks.get(id) {
-                Some(task) => tasks.push(Output::OpenTaskDetails(task.clone())),
+                Some(task) => output = Some(Output::OpenTaskDetails(task.clone())),
                 None => tracing::warn!("Task with ID {:?} not found", id),
             },
             Message::TaskExpand(default_key) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
                 if let Some(task) = self.tasks.get_mut(default_key) {
                     task.expanded = !task.expanded;
                     if let Err(error) = self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |task| task.expanded = !task.expanded)
                     {
@@ -643,7 +638,7 @@ impl Content {
                 if let Some(list) = &self.list {
                     if !self.input.is_empty() {
                         let task = model::Task::new(self.input.clone());
-                        match self.storage.tasks(list.id).save(&task) {
+                        match self.store.tasks(list.id).save(&task) {
                             Ok(_) => {
                                 let id = self.tasks.insert(task);
                                 self.task_input_ids.insert(id, widget::Id::unique());
@@ -659,7 +654,7 @@ impl Content {
             Message::TaskToggleTitleEditMode(id, editing) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 let current_state = self.task_editing.get(id).copied().unwrap_or_default();
@@ -668,7 +663,7 @@ impl Content {
                 let new_state = match (current_state, editing) {
                     // Request to enter edit mode from idle state
                     (EditState::Idle, true) => {
-                        tasks.push(Output::Focus(self.task_input_ids[id].clone()));
+                        output = Some(Output::Focus(self.task_input_ids[id].clone()));
                         Some(EditState::Entering)
                     }
                     // Confirmation that edit mode was entered (from widget after focus)
@@ -677,7 +672,7 @@ impl Content {
                     (EditState::Editing, false) => {
                         if let Some(task) = self.tasks.get(id) {
                             if let Err(error) = self
-                                .storage
+                                .store
                                 .tasks(list.id)
                                 .update(task.id, |t| *t = task.clone())
                             {
@@ -705,18 +700,18 @@ impl Content {
             Message::TaskTitleSubmit(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.tasks.get(id) {
                     match self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |t| *t = task.clone())
                     {
                         Ok(_) => {
                             self.task_editing.insert(id, EditState::Idle);
-                            tasks.push(Output::Focus(widget::Id::new("new-task-input")));
+                            output = Some(Output::Focus(widget::Id::new("new-task-input")));
                         }
                         Err(error) => tracing::error!("Failed to update task: {:?}", error),
                     }
@@ -730,11 +725,11 @@ impl Content {
             Message::TaskDelete(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.tasks.remove(id) {
-                    if let Err(error) = self.storage.tasks(list.id).delete(task.id) {
+                    if let Err(error) = self.store.tasks(list.id).delete(task.id) {
                         tracing::error!("Failed to delete task: {:?}", error);
                     }
                 }
@@ -742,7 +737,7 @@ impl Content {
             Message::TaskComplete(id, complete) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 let task = self.tasks.get_mut(id);
@@ -753,7 +748,7 @@ impl Content {
                         Status::NotStarted
                     };
                     if let Err(error) = self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |t| *t = task.clone())
                     {
@@ -764,17 +759,17 @@ impl Content {
             Message::TaskAddSubTask(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.tasks.get_mut(id) {
                     task.expanded = true;
                     let sub_task = model::Task::new("".to_string());
-                    match self.storage.tasks(list.id).save(&sub_task) {
+                    match self.store.tasks(list.id).save(&sub_task) {
                         Ok(_) => {
                             task.sub_tasks.push(sub_task.clone());
                             if let Err(error) = self
-                                .storage
+                                .store
                                 .tasks(list.id)
                                 .update(task.id, |t| *t = task.clone())
                             {
@@ -786,7 +781,8 @@ impl Content {
                                 .insert(sub_task_id, widget::Id::unique());
                             self.sub_task_editing
                                 .insert(sub_task_id, EditState::Entering);
-                            tasks.push(Output::Focus(self.sub_task_input_ids[sub_task_id].clone()));
+                            output =
+                                Some(Output::Focus(self.sub_task_input_ids[sub_task_id].clone()));
                         }
                         Err(error) => {
                             tracing::error!("Failed to add sub-task: {:?}", error);
@@ -796,14 +792,23 @@ impl Content {
             }
             Message::ToggleHideCompleted => {
                 if let Some(ref mut list) = self.list {
-                    list.hide_completed = !list.hide_completed;
-                    tasks.push(Output::ToggleHideCompleted(list.clone()));
+                    match self.store.lists().update(list.id, |list| {
+                        list.hide_completed = !list.hide_completed;
+                    }) {
+                        Ok(updated) => {
+                            list.hide_completed = !updated.hide_completed;
+                            output = Some(Output::ToggleHideCompleted(updated.clone()));
+                        }
+                        Err(err) => {
+                            tracing::error!("Error updating list: {err}");
+                        }
+                    }
                 }
             }
             Message::SubTaskToggleTitleEditMode(id, editing) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 let current_state = self.sub_task_editing.get(id).copied().unwrap_or_default();
@@ -812,7 +817,7 @@ impl Content {
                 let new_state = match (current_state, editing) {
                     // Request to enter edit mode from idle state
                     (EditState::Idle, true) => {
-                        tasks.push(Output::Focus(self.sub_task_input_ids[id].clone()));
+                        output = Some(Output::Focus(self.sub_task_input_ids[id].clone()));
                         Some(EditState::Entering)
                     }
                     // Confirmation that edit mode was entered (from widget after focus)
@@ -821,7 +826,7 @@ impl Content {
                     (EditState::Editing, false) => {
                         if let Some(task) = self.sub_tasks.get(id) {
                             if let Err(error) = self
-                                .storage
+                                .store
                                 .tasks(list.id)
                                 .update(task.id, |t| *t = task.clone())
                             {
@@ -851,18 +856,18 @@ impl Content {
             Message::SubTaskTitleSubmit(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.sub_tasks.get(id) {
                     match self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |t| *t = task.clone())
                     {
                         Ok(_) => {
                             self.sub_task_editing.insert(id, EditState::Idle);
-                            tasks.push(Output::Focus(widget::Id::new("new-task-input")));
+                            output = Some(Output::Focus(widget::Id::new("new-task-input")));
                         }
                         Err(error) => tracing::error!("Failed to update sub-task: {:?}", error),
                     }
@@ -871,13 +876,13 @@ impl Content {
             Message::SubTaskTitleUpdate(id, title) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.sub_tasks.get_mut(id) {
                     task.title = title;
                     if let Err(error) = self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |t| *t = task.clone())
                     {
@@ -887,7 +892,7 @@ impl Content {
             }
             Message::SubTaskOpenDetails(id) => {
                 if let Some(task) = self.sub_tasks.get(id) {
-                    tasks.push(Output::OpenTaskDetails(task.clone()));
+                    output = Some(Output::OpenTaskDetails(task.clone()));
                 } else {
                     tracing::warn!("Sub-task with ID {:?} not found", id);
                 }
@@ -895,17 +900,17 @@ impl Content {
             Message::SubTaskAddSubTask(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.sub_tasks.get_mut(id) {
                     task.expanded = true;
                     let sub_task = model::Task::new("".to_string());
-                    match self.storage.tasks(list.id).save(&sub_task) {
+                    match self.store.tasks(list.id).save(&sub_task) {
                         Ok(_) => {
                             task.sub_tasks.push(sub_task.clone());
                             if let Err(error) = self
-                                .storage
+                                .store
                                 .tasks(list.id)
                                 .update(task.id, |t| *t = task.clone())
                             {
@@ -917,7 +922,8 @@ impl Content {
                                 .insert(sub_task_id, widget::Id::unique());
                             self.sub_task_editing
                                 .insert(sub_task_id, EditState::Entering);
-                            tasks.push(Output::Focus(self.sub_task_input_ids[sub_task_id].clone()));
+                            output =
+                                Some(Output::Focus(self.sub_task_input_ids[sub_task_id].clone()));
                         }
                         Err(error) => {
                             tracing::error!("Failed to add sub-task: {:?}", error);
@@ -928,7 +934,7 @@ impl Content {
             Message::SubTaskComplete(id, complete) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 let task = self.sub_tasks.get_mut(id);
@@ -939,7 +945,7 @@ impl Content {
                         Status::NotStarted
                     };
                     if let Err(error) = self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |t| *t = task.clone())
                     {
@@ -950,11 +956,11 @@ impl Content {
             Message::SubTaskDelete(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.sub_tasks.remove(id) {
-                    if let Err(error) = self.storage.tasks(list.id).delete(task.id) {
+                    if let Err(error) = self.store.tasks(list.id).delete(task.id) {
                         tracing::error!("Failed to delete sub-task: {:?}", error);
                     }
                 }
@@ -962,13 +968,13 @@ impl Content {
             Message::SubTaskExpand(id) => {
                 let Some(list) = &self.list else {
                     tracing::warn!("No list selected");
-                    return tasks;
+                    return None;
                 };
 
                 if let Some(task) = self.sub_tasks.get_mut(id) {
                     task.expanded = !task.expanded;
                     if let Err(error) = self
-                        .storage
+                        .store
                         .tasks(list.id)
                         .update(task.id, |t| *t = task.clone())
                     {
@@ -980,7 +986,7 @@ impl Content {
                 self.sort_type = sort_type;
             }
         }
-        tasks
+        output
     }
 
     pub fn view(&self) -> Element<'_, Message> {
