@@ -13,7 +13,6 @@ use cosmic::{
 use uuid::Uuid;
 
 use crate::{
-    core::icons,
     fl,
     model::{self, Priority},
     services::store::Store,
@@ -47,17 +46,17 @@ impl Details {
         let priority_model = segmented_button::ModelBuilder::default()
             .insert(|entity| {
                 entity
-                    .icon(icons::get_icon("flag-outline-thin-symbolic", 14))
+                    .icon(widget::icon::from_name("flag-outline-thin-symbolic").size(14))
                     .data(Priority::Low)
             })
             .insert(|entity| {
                 entity
-                    .icon(icons::get_icon("flag-outline-thick-symbolic", 14))
+                    .icon(widget::icon::from_name("flag-outline-thick-symbolic").size(14))
                     .data(Priority::Normal)
             })
             .insert(|entity| {
                 entity
-                    .icon(icons::get_icon("flag-filled-symbolic", 14))
+                    .icon(widget::icon::from_name("flag-filled-symbolic").size(14))
                     .data(Priority::High)
             })
             .build();

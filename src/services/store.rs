@@ -1,4 +1,4 @@
-use crate::app::error::{Error, Result};
+use crate::{Error, Result};
 use crate::model::{List, Task};
 use crate::StoreError;
 use ron::ser::PrettyConfig;

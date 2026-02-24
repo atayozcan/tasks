@@ -13,7 +13,7 @@ use cosmic::{
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 
 use crate::{
-    core::{config, icons},
+    core::{config},
     fl,
     model::{self, List, Status},
     services::store::Store,
@@ -150,7 +150,7 @@ impl Content {
 
         let hide_completed_active = list.hide_completed || self.config.hide_completed;
         let mut hide_completed_button =
-            widget::button::icon(icons::get_handle("check-round-outline-symbolic", 18))
+            widget::button::icon(widget::icon::from_name("check-round-outline-symbolic").size(18))
                 .selected(hide_completed_active)
                 .padding(spacing.space_xxs);
 
@@ -160,15 +160,14 @@ impl Content {
 
         hide_completed_button = hide_completed_button.on_press(Message::ToggleHideCompleted);
 
-        let search_button = widget::button::icon(icons::get_handle("edit-find-symbolic", 18))
+        let search_button = widget::button::icon(widget::icon::from_name("edit-find-symbolic").size(18))
             .selected(self.search_bar_visible)
             .padding(spacing.space_xxs)
             .on_press(Message::ToggleSearchBar);
 
-        let icon = crate::core::icons::get_icon(
-            list.icon.as_deref().unwrap_or("view-list-symbolic"),
-            spacing.space_m,
-        );
+        let icon = widget::icon::from_name(
+            list.icon.as_deref().unwrap_or("view-list-symbolic")
+        ).size( spacing.space_m);
         widget::row::with_capacity(4)
             .align_y(Alignment::Center)
             .spacing(spacing.space_s)
@@ -258,14 +257,14 @@ impl Content {
             "go-down-symbolic"
         };
         let expand_button = not_empty.then(|| {
-            widget::button::icon(icons::get_handle(icon, 18))
+            widget::button::icon(widget::icon::from_name(icon).size(18))
                 .padding(spacing.space_xxs)
                 .on_press(Message::TaskExpand(id))
         });
 
         let more_button = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
             Element::from(
-                cosmic::widget::button::icon(icons::get_handle("view-more-symbolic", 18))
+                cosmic::widget::button::icon(widget::icon::from_name("view-more-symbolic").size(18))
                     .on_press(Message::Empty),
             ),
             widget::menu::items(
@@ -367,14 +366,14 @@ impl Content {
             "go-down-symbolic"
         };
         let expand_button = not_empty.then(|| {
-            widget::button::icon(icons::get_handle(icon, 18))
+            widget::button::icon(widget::icon::from_name(icon).size(18))
                 .padding(spacing.space_xxs)
                 .on_press(Message::SubTaskExpand(id))
         });
 
         let more_button = widget::menu::MenuBar::new(vec![widget::menu::Tree::with_children(
             Element::from(
-                cosmic::widget::button::icon(icons::get_handle("view-more-symbolic", 18))
+                cosmic::widget::button::icon(widget::icon::from_name("view-more-symbolic").size(18))
                     .on_press(Message::Empty),
             ),
             widget::menu::items(
@@ -457,7 +456,7 @@ impl Content {
 
         let container = widget::container(
             widget::column::with_children(vec![
-                icons::get_icon("task-past-due-symbolic", 56).into(),
+                widget::icon::from_name("task-past-due-symbolic").size(56).into(),
                 widget::text::title1(fl!("no-tasks")).into(),
                 widget::text(fl!("no-tasks-suggestion")).into(),
             ])
@@ -486,7 +485,7 @@ impl Content {
                 .on_submit(|_| Message::TaskAdd)
                 .width(Length::Fill)
                 .into(),
-            widget::button::icon(icons::get_handle("mail-send-symbolic", 18))
+            widget::button::icon(widget::icon::from_name("mail-send-symbolic").size(18))
                 .padding(spacing.space_xxs)
                 .class(cosmic::style::Button::Suggested)
                 .on_press(Message::TaskAdd)
@@ -906,7 +905,7 @@ impl Content {
         let Some(ref list) = self.list else {
             return widget::container(
                 widget::column::with_children(vec![
-                    icons::get_icon("applications-office-symbolic", 56).into(),
+                    widget::icon::from_name("applications-office-symbolic").size(56).into(),
                     widget::text::title1(fl!("no-list-selected")).into(),
                     widget::text(fl!("no-list-suggestion")).into(),
                 ])

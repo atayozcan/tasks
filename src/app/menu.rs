@@ -3,13 +3,11 @@
 use std::collections::HashMap;
 
 use cosmic::{
-    widget::menu::{items, key_bind::KeyBind, root, Item, ItemHeight, ItemWidth, MenuBar, Tree},
-    Element,
+    Element, widget::{self, menu::{Item, ItemHeight, ItemWidth, MenuBar, Tree, items, key_bind::KeyBind, root}}
 };
 
 use crate::{
     app::{Action, Message},
-    core::icons,
     fl,
 };
 
@@ -27,19 +25,19 @@ pub fn menu_bar<'a>(
                 vec![
                     Item::Button(
                         fl!("new-window"),
-                        Some(icons::get_handle("tabs-stack-symbolic", 14)),
+                        Some(widget::icon::from_name("tabs-stack-symbolic").size(14).handle()),
                         Action::WindowNew,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("new-list"),
-                        Some(icons::get_handle("plus-square-filled-symbolic", 14)),
+                        Some(widget::icon::from_name("plus-square-filled-symbolic").size(14).handle()),
                         Action::NewList,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("quit"),
-                        Some(icons::get_handle("cross-small-square-filled-symbolic", 14)),
+                        Some(widget::icon::from_name("cross-small-square-filled-symbolic").size(14).handle()),
                         Action::WindowClose,
                     ),
                 ],
@@ -52,19 +50,19 @@ pub fn menu_bar<'a>(
                 vec![
                     Item::Button(
                         fl!("rename"),
-                        Some(icons::get_handle("edit-symbolic", 14)),
+                        Some(widget::icon::from_name("edit-symbolic").size(14).handle()),
                         Action::RenameList,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("icon"),
-                        Some(icons::get_handle("face-smile-big-symbolic", 14)),
+                        Some(widget::icon::from_name("face-smile-big-symbolic").size(14).handle()),
                         Action::Icon,
                     ),
                     Item::Divider,
                     Item::Button(
                         fl!("delete"),
-                        Some(icons::get_handle("user-trash-full-symbolic", 14)),
+                        Some(widget::icon::from_name("user-trash-full-symbolic").size(14).handle()),
                         Action::DeleteList,
                     ),
                 ],
@@ -77,7 +75,7 @@ pub fn menu_bar<'a>(
                 vec![
                     Item::Button(
                         fl!("menu-settings"),
-                        Some(icons::get_handle("settings-symbolic", 14)),
+                        Some(widget::icon::from_name("settings-symbolic").size(14).handle()),
                         Action::Settings,
                     ),
                     Item::Divider,
@@ -90,7 +88,7 @@ pub fn menu_bar<'a>(
                     Item::Divider,
                     Item::Button(
                         fl!("menu-about"),
-                        Some(icons::get_handle("info-outline-symbolic", 14)),
+                        Some(widget::icon::from_name("info-outline-symbolic").size(14).handle()),
                         Action::About,
                     ),
                 ],

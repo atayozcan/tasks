@@ -1,8 +1,7 @@
 pub mod actions;
 pub mod context;
 pub mod dialog;
-pub mod error;
-mod flags;
+pub mod flags;
 pub mod markdown;
 pub mod menu;
 
@@ -35,11 +34,10 @@ use crate::{
     app::{
         actions::{Action, ApplicationAction, NavMenuAction, TasksAction},
         context::ContextPage,
-        dialog::{DialogAction, DialogPage},
+        dialog::{DialogAction, DialogPage}, markdown::Markdown,
     },
     core::{
         config::{self, CONFIG_VERSION},
-        icons,
         key_bind::key_binds,
     },
     fl,
@@ -58,7 +56,7 @@ pub struct Tasks {
     store: Store,
     content: Content,
     details: Details,
-    config_handler: Option<cosmic_config::Config>,
+    handler: cosmic_config::Config,
     config: config::TasksConfig,
     app_themes: Vec<String>,
     context_page: ContextPage,
@@ -94,7 +92,7 @@ impl Tasks {
 
     fn create_nav_item(&mut self, list: &List) -> EntityMut<'_, SingleSelect> {
         let icon =
-            crate::app::icons::get_icon(list.icon.as_deref().unwrap_or("view-list-symbolic"), 16);
+            widget::icon::from_name(list.icon.as_deref().unwrap_or("view-list-symbolic")).size(16);
         self.nav_model
             .insert()
             .text(list.name.clone())
@@ -256,7 +254,7 @@ impl Tasks {
                                 let entity = self.nav_model.active();
                                 self.nav_model.text_set(entity, list.name.clone());
                                 self.nav_model
-                                    .icon_set(entity, crate::app::icons::get_icon(&name, 16));
+                                    .icon_set(entity, widget::icon::from_name(name.clone()).size(16).icon());
                             }
                             if let Some(list) = self.nav_model.active_data_mut::<List>() {
                                 list.icon = Some(name);
@@ -316,21 +314,17 @@ impl Tasks {
                 }
             },
             ApplicationAction::AppTheme(theme) => {
-                if let Some(handler) = &self.config_handler {
-                    if let Err(err) = self.config.set_app_theme(handler, theme.into()) {
-                        tracing::error!("{err}")
-                    }
+                if let Err(err) = self.config.set_app_theme(&self.handler, theme.into()) {
+                    tracing::error!("{err}")
                 }
             }
             ApplicationAction::ToggleHideCompleted(value) => {
-                if let Some(handler) = &self.config_handler {
-                    if let Err(err) = self.config.set_hide_completed(handler, value) {
-                        tracing::error!("{err}")
-                    }
-                    tasks.push(self.update(Message::Content(content::Message::SetConfig(
-                        self.config.clone(),
-                    ))));
+                if let Err(err) = self.config.set_hide_completed(&self.handler, value) {
+                    tracing::error!("{err}")
                 }
+                tasks.push(self.update(Message::Content(content::Message::SetConfig(
+                    self.config.clone(),
+                ))));
             }
             ApplicationAction::SystemThemeModeChange => {
                 tasks.push(cosmic::command::set_theme(self.config.app_theme.theme()));
@@ -363,13 +357,13 @@ impl Tasks {
                 NavMenuAction::Export(entity) => {
                     if let Some(list) = self.nav_model.data::<List>(entity) {
                         match self.store.tasks(list.id).load_all() {
-                            Ok(_data) => {
-                                // let exported_markdown = Store::export_list(list, &data);
-                                // tasks.push(self.update(Message::Application(
-                                //     ApplicationAction::Dialog(DialogAction::Open(
-                                //         DialogPage::Export(exported_markdown),
-                                //     )),
-                                // )));
+                            Ok(data) => {
+                                let exported_markdown = export_list(list, &data);
+                                tasks.push(self.update(Message::Application(
+                                    ApplicationAction::Dialog(DialogAction::Open(
+                                        DialogPage::Export(exported_markdown),
+                                    )),
+                                )));
                             }
                             Err(err) => {
                                 tracing::error!("Error fetching tasks: {err}");
@@ -517,11 +511,11 @@ impl Application for Tasks {
         let mut app = Tasks {
             core,
             about,
-            store: flags.storage.clone(),
+            store: flags.store.clone(),
             nav_model,
-            content: Content::new(flags.storage.clone()),
-            details: Details::new(flags.storage),
-            config_handler: flags.config_handler,
+            content: Content::new(flags.store.clone()),
+            details: Details::new(flags.store),
+            handler: flags.handler,
             config: flags.config,
             app_themes: vec![fl!("match-desktop"), fl!("dark"), fl!("light")],
             context_page: ContextPage::Settings,
@@ -586,22 +580,22 @@ impl Application for Tasks {
             vec![
                 cosmic::widget::menu::Item::Button(
                     fl!("rename"),
-                    Some(icons::get_handle("edit-symbolic", 14)),
+                    Some(widget::icon::from_name("edit-symbolic").size(14).handle()),
                     NavMenuAction::Rename(id),
                 ),
                 cosmic::widget::menu::Item::Button(
                     fl!("icon"),
-                    Some(icons::get_handle("face-smile-big-symbolic", 14)),
+                    Some(widget::icon::from_name("face-smile-big-symbolic").size(14).handle()),
                     NavMenuAction::SetIcon(id),
                 ),
                 cosmic::widget::menu::Item::Button(
                     fl!("export"),
-                    Some(icons::get_handle("share-symbolic", 18)),
+                    Some(widget::icon::from_name("share-symbolic").size(18).handle()),
                     NavMenuAction::Export(id),
                 ),
                 cosmic::widget::menu::Item::Button(
                     fl!("delete"),
-                    Some(icons::get_handle("user-trash-full-symbolic", 14)),
+                    Some(widget::icon::from_name("user-trash-full-symbolic").size(14).handle()),
                     NavMenuAction::Delete(id),
                 ),
             ],
@@ -718,4 +712,11 @@ impl Application for Tasks {
     fn view(&self) -> Element<'_, Self::Message> {
         self.content.view().map(Message::Content)
     }
+}
+
+
+pub fn export_list(list: &List, tasks: &[crate::model::Task]) -> String {
+    let markdown = list.markdown();
+    let tasks_markdown: String = tasks.iter().map(Markdown::markdown).collect();
+    format!("{markdown}\n{tasks_markdown}")
 }

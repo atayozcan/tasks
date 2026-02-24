@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use cosmic::{
     iced::{
         alignment::{Horizontal, Vertical},
@@ -25,6 +27,42 @@ pub enum DialogPage {
     Delete(Option<segmented_button::Entity>),
     Calendar(CalendarModel),
     Export(String),
+}
+
+pub fn get_all_icon_handles(size: u16) -> Vec<(String, widget::icon::Handle)> {
+    let mut icons = Vec::new();
+    
+    // Scan system icon directories
+    let icon_dirs = vec![
+        PathBuf::from("/usr/share/icons/hicolor"),
+        PathBuf::from("/usr/share/icons/Adwaita"),
+    ];
+    
+    for dir in icon_dirs {
+        if let Ok(entries) = scan_icon_directory(&dir) {
+            for name in entries {
+                let handle = widget::icon::from_name(&*name).size(size).handle();
+                icons.push((name, handle));
+            }
+        }
+    }
+    
+    icons
+}
+
+fn scan_icon_directory(path: &PathBuf) -> std::io::Result<Vec<String>> {
+    let mut icons = Vec::new();
+    
+    for entry in std::fs::read_dir(path.join("scalable/actions"))? {
+        let entry = entry?;
+        if let Some(name) = entry.file_name().to_str() {
+            if name.ends_with(".svg") {
+                icons.push(name.trim_end_matches(".svg").to_string());
+            }
+        }
+    }
+    
+    Ok(icons)
 }
 
 impl DialogPage {
@@ -97,7 +135,7 @@ impl DialogPage {
                 )),
             DialogPage::Icon(entity, icon, search) => {
                 let search_lower = search.to_lowercase();
-                let icon_buttons = crate::core::icons::get_all_icon_handles(20)
+                let icon_buttons = get_all_icon_handles(20)
                     .iter()
                     .filter(|(name, _)| name.to_lowercase().contains(&search_lower))
                     .map(|(name, icon)| {
@@ -128,7 +166,7 @@ impl DialogPage {
 
                 let dialog = widget::dialog()
                     .title(fl!("icon-select"))
-                    .icon(crate::core::icons::get_icon(icon, 32))
+                    .icon(widget::icon::from_name(icon.clone()).size(32))
                     .primary_action(widget::button::suggested(fl!("ok")).on_press_maybe(Some(
                         Message::Application(ApplicationAction::Dialog(DialogAction::Complete)),
                     )))
