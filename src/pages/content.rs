@@ -41,7 +41,7 @@ pub struct Content {
     config: config::AppConfig,
     store: Store,
 
-    context_menu_open: bool,
+    context_drawer_open: bool,
     search_bar_visible: bool,
     add_task_input: String,
     search_query: String,
@@ -77,7 +77,7 @@ pub enum Message {
     SetConfig(config::AppConfig),
     RefreshTask(model::Task),
     Empty,
-    ContextMenuOpen(bool),
+    ContextDrawerOpen(bool),
 
     ToggleSearchBar,
     SearchQueryChanged(String),
@@ -125,7 +125,7 @@ impl Content {
             .apply(widget::container)
             .height(Length::Fill)
             .width(Length::Fill)
-            .center(if self.context_menu_open {
+            .center(if self.context_drawer_open {
                 Length::Shrink
             } else {
                 Length::Fill
@@ -147,8 +147,8 @@ impl Content {
                 self.search_query = query;
             }
             Message::Empty => (),
-            Message::ContextMenuOpen(open) => {
-                self.context_menu_open = open;
+            Message::ContextDrawerOpen(open) => {
+                self.context_drawer_open = open;
             }
             Message::SetTasks(tasks) => {
                 self.tasks.clear();
@@ -405,7 +405,7 @@ impl Content {
             add_task_input: String::new(),
             config: config,
             store: storage,
-            context_menu_open: false,
+            context_drawer_open: false,
             search_bar_visible: false,
             search_query: String::new(),
             sort_type: SortType::DateAsc,
@@ -634,7 +634,7 @@ impl Content {
         id: DefaultKey,
         task: &'a model::Task,
     ) -> Element<'a, Message> {
-        widget::checkbox("", task.status == Status::Completed)
+        widget::checkbox(task.status == Status::Completed)
             .on_toggle(move |value| Message::TaskComplete(id, value))
             .into()
     }

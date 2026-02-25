@@ -213,18 +213,18 @@ impl Application for AppModel {
                     self.context_page = page;
                     self.core.window.show_context = true;
                 }
-                return cosmic::task::message(Message::Content(content::Message::ContextMenuOpen(
-                    self.core.window.show_context,
-                )));
+                return cosmic::task::message(Message::Content(
+                    content::Message::ContextDrawerOpen(self.core.window.show_context),
+                ));
             }
             Message::NavMenu(action) => {
                 return self.update_nav_menu(action);
             }
             Message::ToggleContextDrawer => {
                 self.core.window.show_context = !self.core.window.show_context;
-                return cosmic::task::message(Message::Content(content::Message::ContextMenuOpen(
-                    self.core.window.show_context,
-                )));
+                return cosmic::task::message(Message::Content(
+                    content::Message::ContextDrawerOpen(self.core.window.show_context),
+                ));
             }
         }
 
